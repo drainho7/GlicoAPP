@@ -11,9 +11,10 @@ import {
   ImportUi,
   PeriodPicker,
   Preset,
+  rangeFor,
+  ReportDialog,
   SettingsPanel,
 } from './components';
-import { addDays } from './format';
 import {
   clearReadings,
   ensureBackup,
@@ -38,6 +39,7 @@ export default function App() {
   const [category, setCategory] = useState<Category | 'todas'>('todas');
   const [ui, setUi] = useState<ImportUi>({ phase: 'closed' });
   const [toast, setToast] = useState('');
+  const [reportOpen, setReportOpen] = useState(false);
 
   // App instalado: se o armazenamento estiver vazio, restaura de Documentos\Glico\backup.json.
   useEffect(() => {
@@ -71,13 +73,12 @@ export default function App() {
   const last = all[all.length - 1];
   const anchor = last ? last.time.slice(0, 10) : new Date().toISOString().slice(0, 10);
 
-  const range = useMemo<{ from?: string; to?: string }>(() => {
-    if (preset === 'all') return {};
-    if (preset === 'custom') return { from: cFrom || undefined, to: cTo || undefined };
-    return { from: addDays(anchor, -(Number(preset) - 1)), to: anchor };
-  }, [preset, cFrom, cTo, anchor]);
+  const range = useMemo(() => rangeFor(preset, anchor, cFrom, cTo), [preset, cFrom, cTo, anchor]);
 
   const current = useMemo(() => filterRange(all, range.from, range.to), [all, range]);
+  const brd = (d: string) => d.split('-').reverse().join('/');
+  const periodSummary =
+    `${range.from && range.to ? `${brd(range.from)} a ${brd(range.to)}` : 'todo o período'} · ${current.length} ${current.length === 1 ? 'leitura' : 'leituras'}`;
   const previous = useMemo(
     () => (range.from && range.to ? filterRange(all, previousRange(range.from, range.to).from, previousRange(range.from, range.to).to) : null),
     [all, range],
@@ -108,20 +109,21 @@ export default function App() {
     }
   };
 
-  const exportPdf = async () => {
-    const from = range.from ?? all[0]?.time.slice(0, 10);
-    const to = range.to ?? last?.time.slice(0, 10);
+  const exportPdf = async (r: { from?: string; to?: string }) => {
+    setReportOpen(false);
+    const from = r.from ?? all[0]?.time.slice(0, 10);
+    const to = r.to ?? last?.time.slice(0, 10);
     const q = new URLSearchParams();
-    if (range.from) q.set('from', range.from);
-    if (range.to) q.set('to', range.to);
+    if (r.from) q.set('from', r.from);
+    if (r.to) q.set('to', r.to);
     if (!window.glico) {
       window.open(`${location.pathname}#/relatorio?${q}`, '_blank'); // navegador: abre e imprime
       return;
     }
     // Abre a pré-visualização; de lá você salva ou imprime pelos botões do visualizador.
     setToast('Preparando a pré-visualização…');
-    const r = await window.glico.previewPdf({ from: range.from, to: range.to, fileName: `Relatorio-Glicemia_${from}_a_${to}.pdf` });
-    setToast(r.ok ? '' : `Falha ao gerar o relatório: ${r.error}`);
+    const res = await window.glico.previewPdf({ from: r.from, to: r.to, fileName: `Relatorio-Glicemia_${from}_a_${to}.pdf` });
+    setToast(res.ok ? '' : `Falha ao gerar o relatório: ${res.error}`);
   };
 
   const updateSettings = (s: Settings) => {
@@ -151,7 +153,7 @@ export default function App() {
             </section>
           ) : (
             <>
-              <PeriodPicker preset={preset} setPreset={setPreset} from={cFrom} to={cTo} setFrom={setCFrom} setTo={setCTo} onPdf={exportPdf} />
+              <PeriodPicker preset={preset} setPreset={setPreset} from={cFrom} to={cTo} setFrom={setCFrom} setTo={setCTo} onPdf={() => setReportOpen(true)} summary={periodSummary} />
               {screen === 'inicio' && (
                 <>
                   <CategoryCards current={current} previous={previous} settings={settings} selected={category} onSelect={setCategory} />
@@ -180,6 +182,7 @@ export default function App() {
 
       {toast && <div className="toast">{toast}</div>}
       <ImportDialog ui={ui} onClose={() => setUi({ phase: 'closed' })} />
+      {reportOpen && <ReportDialog readings={all} anchor={anchor} onClose={() => setReportOpen(false)} onConfirm={exportPdf} />}
     </div>
   );
 }

@@ -77,6 +77,11 @@ button.danger { background: transparent; color: var(--low); border: 1px solid va
 .row2 { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 button.primary.small { padding: 8px 14px; font-size: 14px; min-height: 0; border-radius: 999px; }
 .dates { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.chips.center, .dates.center, .row2.center { justify-content: center; }
+.period-note { margin: 8px 2px 0; font-size: 13px; }
+.report-range { margin: 16px 0 12px; font-size: 17px; }
+.dialog .chips { margin-top: 6px; }
+.dialog .row2 { margin-top: 6px; }
 
 .cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 14px 0; }
 .cards3 .card { margin: 0; }

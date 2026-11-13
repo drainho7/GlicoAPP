@@ -6,6 +6,7 @@ import {
   Category,
   classify,
   estimateA1c,
+  filterRange,
   groupByPeriod,
   Period,
   Settings,
@@ -14,7 +15,7 @@ import {
   summarizeByCategory,
 } from '../../src/analytics/analytics';
 import { Chart, Series } from './Chart';
-import { dayHeading, friendlyTime, groupLabel, shortDate } from './format';
+import { addDays, dayHeading, friendlyTime, groupLabel, shortDate } from './format';
 import { StoredReading } from './store';
 
 export const COLOR: Record<Category, string> = { jejum: '#42a5f5', almoco: '#ffca28', janta: '#ba68c8', outra: '#9e9e9e' };
@@ -68,6 +69,13 @@ export function Hero({
 export type Preset = '7' | '30' | '90' | '365' | 'all' | 'custom';
 const PRESETS: [Preset, string][] = [['7', '7 dias'], ['30', '30 dias'], ['90', '90 dias'], ['365', '1 ano'], ['all', 'Tudo'], ['custom', 'Datas…']];
 
+/** Converte a escolha de período em datas. "N dias" contam para trás a partir da última leitura. */
+export function rangeFor(preset: Preset, anchor: string, cFrom: string, cTo: string): { from?: string; to?: string } {
+  if (preset === 'all') return {};
+  if (preset === 'custom') return { from: cFrom || undefined, to: cTo || undefined };
+  return { from: addDays(anchor, -(Number(preset) - 1)), to: anchor };
+}
+
 export function PeriodPicker({
   preset,
   setPreset,
@@ -76,6 +84,7 @@ export function PeriodPicker({
   setFrom,
   setTo,
   onPdf,
+  summary,
 }: {
   preset: Preset;
   setPreset: (p: Preset) => void;
@@ -84,6 +93,7 @@ export function PeriodPicker({
   setFrom: (s: string) => void;
   setTo: (s: string) => void;
   onPdf: () => void;
+  summary: string;
 }) {
   return (
     <div className="picker">
@@ -101,6 +111,57 @@ export function PeriodPicker({
           <label>até <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
         </div>
       )}
+      <p className="muted period-note">Exibindo {summary}. Vale para os cartões, o gráfico e o histórico.</p>
+    </div>
+  );
+}
+
+/* ---------------- Janela "Relatório em PDF": escolher o período ---------------- */
+
+export function ReportDialog({
+  readings,
+  anchor,
+  onClose,
+  onConfirm,
+}: {
+  readings: StoredReading[];
+  anchor: string;
+  onClose: () => void;
+  onConfirm: (r: { from?: string; to?: string }) => void;
+}) {
+  const [preset, setPreset] = useState<Preset>('30');
+  const [cFrom, setCFrom] = useState(addDays(anchor, -29));
+  const [cTo, setCTo] = useState(anchor);
+  const range = rangeFor(preset, anchor, cFrom, cTo);
+  const count = filterRange(readings, range.from, range.to).length;
+  const invalid = preset === 'custom' && (!cFrom || !cTo || cFrom > cTo);
+  const label = range.from && range.to ? `${brDate(range.from)} a ${brDate(range.to)}` : 'Todas as leituras';
+  return (
+    <div className="overlay" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="dialog card" onClick={(e) => e.stopPropagation()}>
+        <h2>Relatório em PDF</h2>
+        <p className="muted">Escolha o período que o relatório deve cobrir.</p>
+        <div className="chips center">
+          {PRESETS.map(([k, l]) => (
+            <button key={k} className={preset === k ? 'chip on' : 'chip'} onClick={() => setPreset(k)}>{l}</button>
+          ))}
+        </div>
+        {preset === 'custom' && (
+          <div className="dates center">
+            <label>De <input type="date" value={cFrom} max={cTo || undefined} onChange={(e) => setCFrom(e.target.value)} /></label>
+            <label>até <input type="date" value={cTo} min={cFrom || undefined} onChange={(e) => setCTo(e.target.value)} /></label>
+          </div>
+        )}
+        <p className="report-range">
+          <b>{invalid ? 'Confira as datas' : label}</b>
+          {!invalid && <span className="muted"> · {count} {count === 1 ? 'leitura' : 'leituras'}</span>}
+        </p>
+        {!invalid && count === 0 && <p className="muted">Não há leituras nesse período.</p>}
+        <div className="row2 center">
+          <button className="chip" onClick={onClose}>Cancelar</button>
+          <button className="primary small" disabled={invalid || count === 0} onClick={() => onConfirm(range)}>Pré-visualizar</button>
+        </div>
+      </div>
     </div>
   );
 }
