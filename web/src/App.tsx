@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Category, filterRange, previousRange, Settings } from '../../src/analytics/analytics';
 import { importFromMeter } from './bluetooth';
 import {
+  A1cCard,
   CategoryCards,
   ChartSection,
   Hero,
@@ -154,6 +155,7 @@ export default function App() {
                 <>
                   <CategoryCards current={current} previous={previous} settings={settings} selected={category} onSelect={setCategory} />
                   <ChartSection readings={current} settings={settings} category={category} />
+                  <A1cCard readings={all} settings={settings} />
                 </>
               )}
               {screen === 'historico' && <History readings={current} settings={settings} />}

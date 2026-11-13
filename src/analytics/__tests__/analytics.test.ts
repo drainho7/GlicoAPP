@@ -1,4 +1,8 @@
 import {
+  a1cFromMean,
+  calibrateWithExam,
+  eagFromA1c,
+  estimateA1c,
   classify,
   compareRanges,
   DEFAULT_SETTINGS,
@@ -106,6 +110,40 @@ describe('statusOf e previousRange', () => {
   it('período anterior tem a mesma duração', () => {
     expect(previousRange('2026-11-07', '2026-11-13')).toEqual({ from: '2026-10-31', to: '2026-11-06' });
     expect(previousRange('2026-03-01', '2026-03-01')).toEqual({ from: '2026-02-28', to: '2026-02-28' });
+  });
+});
+
+describe('HbA1c estimada', () => {
+  it('fórmula ADAG nos dois sentidos', () => {
+    expect(a1cFromMean(154)).toBeCloseTo(7.0, 1);
+    expect(eagFromA1c(7)).toBeCloseTo(154.2, 1);
+    expect(a1cFromMean(eagFromA1c(6.4))).toBeCloseTo(6.4, 5);
+  });
+  const mk = (n: number, day0: string, mg: number): Reading[] =>
+    Array.from({ length: n }, (_, i) => r(`${new Date(Date.parse(day0 + 'T00:00:00Z') + i * 86_400_000).toISOString().slice(0, 10)}T08:00:00`, mg));
+  it('usa só a janela de 90 dias terminando na data', () => {
+    const data = [...mk(10, '2026-01-01', 300), ...mk(10, '2026-10-01', 154)];
+    const e = estimateA1c(data, '2026-10-10')!;
+    expect(e.count).toBe(10);
+    expect(e.mean).toBe(154);
+    expect(e.a1c).toBe(7);
+    expect(e.windowFrom).toBe('2026-07-13');
+  });
+  it('sem leituras na janela não estima', () => {
+    expect(estimateA1c(mk(5, '2025-01-01', 150), '2026-10-10')).toBeNull();
+  });
+  it('cobertura: poucos dias = confiança baixa', () => {
+    expect(estimateA1c(mk(5, '2026-10-01', 150), '2026-10-10')!.confidence).toBe('baixa');
+    expect(estimateA1c(mk(50, '2026-08-20', 150), '2026-10-10')!.confidence).toBe('razoável');
+  });
+  it('calibra com o exame: diferença = exame - estimativa da época', () => {
+    const data = mk(30, '2026-08-01', 154); // estimativa ≈ 7,0
+    const c = calibrateWithExam(data, { value: 6.6, date: '2026-08-30' })!;
+    expect(c.atExam.a1c).toBe(7);
+    expect(c.delta).toBe(-0.4);
+  });
+  it('calibração sem leituras na época do exame retorna null', () => {
+    expect(calibrateWithExam(mk(5, '2026-10-01', 150), { value: 7, date: '2025-01-01' })).toBeNull();
   });
 });
 

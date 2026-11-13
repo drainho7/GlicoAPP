@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo } from 'react';
 import {
+  calibrateWithExam,
   CATEGORY_LABEL,
   classify,
+  estimateA1c,
   filterRange,
   groupByPeriod,
   Period,
@@ -46,6 +48,11 @@ export default function Report() {
     const p = previousRange(from, to);
     return summarizeByCategory(filterRange(all, p.from, p.to), settings);
   }, [all, from, to, settings]);
+
+  // HbA1c estimada: 90 dias terminando no fim do período do relatório (simulação, não é exame).
+  const est = useMemo(() => (rTo ? estimateA1c(all, rTo) : null), [all, rTo]);
+  const cal = useMemo(() => (settings.exam ? calibrateWithExam(all, settings.exam) : null), [all, settings.exam]);
+  const pc = (n: number) => n.toFixed(1).replace('.', ',');
 
   const span = rFrom && rTo ? daysBetween(rFrom, rTo) : 0;
   const period: Period = span <= 45 ? 'day' : span <= 200 ? 'week' : 'month';
@@ -105,6 +112,28 @@ export default function Report() {
             <div className="kpi"><span>Máxima</span><b>{fmt(sum.all.max)}</b><small>mg/dL</small></div>
             <div className="kpi accent"><span>Dentro da meta</span><b>{inTarget ?? '—'}%</b><small>das medições</small></div>
           </section>
+
+          {est && (
+            <section className="r-a1c">
+              <div className="a1c-main">
+                <span>HbA1c estimada <em>simulação · não é exame</em></span>
+                <b>{pc(est.a1c)}<small> %</small></b>
+                <small>média {Math.round(est.mean)} mg/dL · {est.count} leituras em {est.days} dias (até {br(est.windowTo)}) · cobertura {est.confidence}</small>
+              </div>
+              {settings.exam && (
+                <div className="a1c-ex">
+                  <span>Último exame informado</span>
+                  <b>{pc(settings.exam.value)}<small> % · {br(settings.exam.date)}</small></b>
+                  {cal && (
+                    <small>
+                      Na época a estimativa dava {pc(cal.atExam.a1c)}% (diferença {cal.delta > 0 ? '+' : ''}{pc(cal.delta)}); ajustada: {pc(Math.max(3, Math.round((est.a1c + cal.delta) * 10) / 10))}%
+                    </small>
+                  )}
+                </div>
+              )}
+              <p>Referência apenas: a HbA1c real vem do exame de laboratório. A estimativa usa a média das glicemias e tende a errar com poucas medições por dia.</p>
+            </section>
+          )}
 
           <h2>Por momento do dia</h2>
           <section className="r-cats">

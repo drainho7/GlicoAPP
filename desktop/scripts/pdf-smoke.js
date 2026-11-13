@@ -22,6 +22,13 @@ app.whenReady().then(async () => {
   await seed.loadURL(APP_URL);
   await seed.webContents.executeJavaScript(`localStorage.setItem('glico.web.readings.v1', ${JSON.stringify(JSON.stringify(rows))}); true`);
 
+  if (process.env.GLICO_EXAM) {
+    const [value, date] = process.env.GLICO_EXAM.split(',');
+    await seed.webContents.executeJavaScript(
+      `localStorage.setItem('glico.web.settings.v1', ${JSON.stringify(JSON.stringify({ exam: { value: Number(value), date } }))}); true`,
+    );
+  }
+
   const pdf = await renderReportPdf({ from, to });
   fs.writeFileSync(outPdf, pdf);
   console.log('PDF gerado:', outPdf, pdf.length, 'bytes');

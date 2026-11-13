@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  calibrateWithExam,
   CATEGORIES,
   CATEGORY_LABEL,
   Category,
   classify,
+  estimateA1c,
   groupByPeriod,
   Period,
   Settings,
@@ -240,6 +242,57 @@ export function ChartSection({
   );
 }
 
+/* ---------------- HbA1c estimada (simulação) ---------------- */
+
+const pc = (n: number) => n.toFixed(1).replace('.', ',');
+const brDate = (d: string) => d.split('-').reverse().join('/');
+
+export function A1cCard({ readings, settings }: { readings: StoredReading[]; settings: Settings }) {
+  const last = readings[readings.length - 1]?.time.slice(0, 10);
+  const est = useMemo(() => (last ? estimateA1c(readings, last) : null), [readings, last]);
+  const exam = settings.exam;
+  const cal = useMemo(() => (exam ? calibrateWithExam(readings, exam) : null), [readings, exam]);
+  if (!est) return null;
+  const adjusted = cal ? Math.max(3, Math.round((est.a1c + cal.delta) * 10) / 10) : null;
+  return (
+    <section className="card a1c">
+      <div className="section-head">
+        <h2>HbA1c estimada</h2>
+        <span className="badge">simulação · não é exame</span>
+      </div>
+      <div className="a1c-row">
+        <div>
+          <div className="avg">{pc(est.a1c)}<small> %</small></div>
+          <div className="muted">média de {Math.round(est.mean)} mg/dL · {est.count} leituras em {est.days} dias</div>
+          <div className="muted">últimos 90 dias ({brDate(est.windowFrom)} a {brDate(est.windowTo)}) · cobertura {est.confidence}</div>
+        </div>
+        <div className="a1c-exam">
+          {exam ? (
+            <>
+              <div className="muted">Seu último exame</div>
+              <div className="avg">{pc(exam.value)}<small> % · {brDate(exam.date)}</small></div>
+              {cal ? (
+                <div className="muted">
+                  Na época a estimativa dava {pc(cal.atExam.a1c)}% (diferença {cal.delta > 0 ? '+' : ''}{pc(cal.delta)}).
+                  Estimativa ajustada por esse exame: <b>{pc(adjusted!)}%</b>
+                </div>
+              ) : (
+                <div className="muted">Sem leituras suficientes na época do exame para comparar.</div>
+              )}
+            </>
+          ) : (
+            <div className="muted">Informe o resultado do seu último exame em <b>Ajustes</b> para comparar e ajustar a estimativa.</div>
+          )}
+        </div>
+      </div>
+      <p className="disclaimer">
+        Só uma referência para acompanhar. A HbA1c de verdade vem do exame de laboratório; esta conta usa a média das suas glicemias e
+        costuma errar com poucas medições por dia e muitas em jejum.
+      </p>
+    </section>
+  );
+}
+
 /* ---------------- Histórico ---------------- */
 
 export function History({ readings, settings }: { readings: StoredReading[]; settings: Settings }) {
@@ -324,6 +377,34 @@ function AboutPanel() {
   );
 }
 
+function ExamForm({ settings, onChange }: { settings: Settings; onChange: (s: Settings) => void }) {
+  const [value, setValue] = useState(settings.exam ? String(settings.exam.value).replace('.', ',') : '');
+  const [date, setDate] = useState(settings.exam?.date ?? '');
+  const commit = (v: string, d: string) => {
+    const n = Number(v.replace(',', '.'));
+    if (v && d && Number.isFinite(n) && n >= 3 && n <= 20) onChange({ ...settings, exam: { value: Math.round(n * 10) / 10, date: d } });
+    else if (!v && !d) onChange({ ...settings, exam: undefined });
+  };
+  return (
+    <div className="card">
+      <h2>Último exame de HbA1c</h2>
+      <p className="muted">Digite o resultado do laboratório. Ele é usado só para comparar com a estimativa do app.</p>
+      <div className="setrow">
+        <b>Resultado (%)</b>
+        <input inputMode="decimal" placeholder="ex.: 7,2" value={value} style={{ width: 90 }}
+          onChange={(e) => { setValue(e.target.value); commit(e.target.value, date); }} />
+      </div>
+      <div className="setrow">
+        <b>Data do exame</b>
+        <input type="date" value={date} onChange={(e) => { setDate(e.target.value); commit(value, e.target.value); }} />
+      </div>
+      {(value || date) && (
+        <button className="danger" onClick={() => { setValue(''); setDate(''); onChange({ ...settings, exam: undefined }); }}>Remover exame</button>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPanel({
   settings,
   onChange,
@@ -353,6 +434,7 @@ export function SettingsPanel({
           </div>
         ))}
       </div>
+      <ExamForm settings={settings} onChange={onChange} />
       <div className="card">
         <h2>Metas (mg/dL)</h2>
         <p className="muted">Ponto de partida editável. Combine suas metas com seu médico.</p>
