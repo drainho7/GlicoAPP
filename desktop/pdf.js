@@ -1,4 +1,5 @@
-const { BrowserWindow, net, protocol } = require('electron');
+const { app, BrowserWindow, net, protocol } = require('electron');
+const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -52,4 +53,32 @@ async function renderReportPdf({ from, to } = {}) {
   }
 }
 
-module.exports = { APP_URL, registerAppScheme, handleAppProtocol, renderReportPdf };
+/** Nome de arquivo seguro para o Windows. */
+const safeFileName = (name) => String(name || 'Relatorio-Glicemia.pdf').replace(/[\\/:*?"<>|]/g, '-');
+
+/**
+ * Abre o PDF no visualizador embutido do Chromium: mostra as páginas exatamente como serão salvas,
+ * com zoom e os botões de salvar e imprimir. O arquivo temporário é apagado ao fechar a janela.
+ */
+function openPdfPreview(pdf, fileName, parent) {
+  const dir = path.join(app.getPath('temp'), 'glico-preview', String(Date.now()));
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, safeFileName(fileName));
+  fs.writeFileSync(file, pdf);
+
+  const win = new BrowserWindow({
+    parent: parent || undefined,
+    width: 980,
+    height: 1100,
+    title: 'Pré-visualização do relatório',
+    autoHideMenuBar: true,
+    backgroundColor: '#525659',
+    webPreferences: { plugins: true, sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  win.setMenuBarVisibility(false);
+  win.on('closed', () => fs.rm(dir, { recursive: true, force: true }, () => {}));
+  win.loadURL(pathToFileURL(file).toString());
+  return win;
+}
+
+module.exports = { APP_URL, registerAppScheme, handleAppProtocol, renderReportPdf, openPdfPreview, safeFileName };

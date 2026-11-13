@@ -14,6 +14,7 @@ declare global {
       isElectron: true;
       getVersion(): Promise<string>;
       exportPdf(o: { from?: string; to?: string; fileName: string }): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>;
+      previewPdf(o: { from?: string; to?: string; fileName: string }): Promise<{ ok: boolean; error?: string }>;
       backupSave(json: string): Promise<void>;
       backupLoad(): Promise<string | null>;
       checkUpdate(): Promise<GlicoUpdateState>;

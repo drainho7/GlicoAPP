@@ -118,9 +118,10 @@ export default function App() {
       window.open(`${location.pathname}#/relatorio?${q}`, '_blank'); // navegador: abre e imprime
       return;
     }
-    setToast('Gerando PDF…');
-    const r = await window.glico.exportPdf({ from: range.from, to: range.to, fileName: `Relatorio-Glicemia_${from}_a_${to}.pdf` });
-    setToast(r.ok ? `PDF salvo em ${r.path}` : r.canceled ? '' : `Falha ao gerar o PDF: ${r.error}`);
+    // Abre a pré-visualização; de lá você salva ou imprime pelos botões do visualizador.
+    setToast('Preparando a pré-visualização…');
+    const r = await window.glico.previewPdf({ from: range.from, to: range.to, fileName: `Relatorio-Glicemia_${from}_a_${to}.pdf` });
+    setToast(r.ok ? '' : `Falha ao gerar o relatório: ${r.error}`);
   };
 
   const updateSettings = (s: Settings) => {

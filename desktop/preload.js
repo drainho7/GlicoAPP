@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('glico', {
   isElectron: true,
   getVersion: () => ipcRenderer.invoke('app-version'),
   exportPdf: (opts) => ipcRenderer.invoke('export-pdf', opts),
+  previewPdf: (opts) => ipcRenderer.invoke('preview-pdf', opts),
   backupSave: (json) => ipcRenderer.invoke('backup-save', json),
   backupLoad: () => ipcRenderer.invoke('backup-load'),
   checkUpdate: () => ipcRenderer.invoke('update-check'),
