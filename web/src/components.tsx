@@ -1,0 +1,404 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  CATEGORIES,
+  CATEGORY_LABEL,
+  Category,
+  classify,
+  groupByPeriod,
+  Period,
+  Settings,
+  Status,
+  statusOf,
+  summarizeByCategory,
+} from '../../src/analytics/analytics';
+import { Chart, Series } from './Chart';
+import { dayHeading, friendlyTime, groupLabel, shortDate } from './format';
+import { StoredReading } from './store';
+
+export const COLOR: Record<Category, string> = { jejum: '#42a5f5', almoco: '#ffca28', janta: '#ba68c8', outra: '#9e9e9e' };
+const STATUS_TEXT: Record<Status, string> = { ok: 'Dentro da meta', high: 'Acima da meta', low: 'Abaixo da meta' };
+const toMs = (t: string) => Date.parse(t + 'Z'); // só posiciona no eixo; sem conversão de fuso
+const fmt = (n: number | null) => (n === null ? '—' : String(Math.round(n)));
+
+/* ---------------- Cabeçalho: última leitura + importar ---------------- */
+
+export function Hero({
+  last,
+  settings,
+  busy,
+  onImport,
+}: {
+  last?: StoredReading;
+  settings: Settings;
+  busy: boolean;
+  onImport: () => void;
+}) {
+  const c = last ? classify(last.time, settings) : null;
+  const st = last && c ? statusOf(last.mgdl, c, settings) : null;
+  return (
+    <section className="hero card">
+      <div>
+        <div className="muted">Última medição</div>
+        {last && c && st ? (
+          <>
+            <div className={`big s-${st}`}>
+              {last.mgdl}
+              <small> mg/dL</small>
+            </div>
+            <div>{friendlyTime(last.time)}</div>
+            <div className="muted">
+              {CATEGORY_LABEL[c]} · <span className={`s-${st}`}>{STATUS_TEXT[st]}</span>
+            </div>
+          </>
+        ) : (
+          <div className="big muted">—</div>
+        )}
+      </div>
+      <button className="primary" onClick={onImport} disabled={busy}>
+        {busy ? 'Importando…' : '⟳ Importar do medidor'}
+      </button>
+    </section>
+  );
+}
+
+/* ---------------- Período ---------------- */
+
+export type Preset = '7' | '30' | '90' | '365' | 'all' | 'custom';
+const PRESETS: [Preset, string][] = [['7', '7 dias'], ['30', '30 dias'], ['90', '90 dias'], ['365', '1 ano'], ['all', 'Tudo'], ['custom', 'Datas…']];
+
+export function PeriodPicker({
+  preset,
+  setPreset,
+  from,
+  to,
+  setFrom,
+  setTo,
+  onPdf,
+}: {
+  preset: Preset;
+  setPreset: (p: Preset) => void;
+  from: string;
+  to: string;
+  setFrom: (s: string) => void;
+  setTo: (s: string) => void;
+  onPdf: () => void;
+}) {
+  return (
+    <div className="picker">
+      <div className="chips">
+        {PRESETS.map(([k, l]) => (
+          <button key={k} className={preset === k ? 'chip on' : 'chip'} onClick={() => setPreset(k)}>
+            {l}
+          </button>
+        ))}
+        <button className="chip pdf" onClick={onPdf}>📄 Relatório PDF</button>
+      </div>
+      {preset === 'custom' && (
+        <div className="dates">
+          <label>De <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+          <label>até <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- Cartões por refeição ---------------- */
+
+export function CategoryCards({
+  current,
+  previous,
+  settings,
+  selected,
+  onSelect,
+}: {
+  current: StoredReading[];
+  previous: StoredReading[] | null;
+  settings: Settings;
+  selected: Category | 'todas';
+  onSelect: (c: Category | 'todas') => void;
+}) {
+  const cur = useMemo(() => summarizeByCategory(current, settings), [current, settings]);
+  const prev = useMemo(() => (previous ? summarizeByCategory(previous, settings) : null), [previous, settings]);
+  const cats = ['jejum', 'almoco', 'janta'] as const;
+  return (
+    <div className="cards3">
+      {cats.map((c) => {
+        const s = cur.byCategory[c];
+        const pm = prev?.byCategory[c].mean ?? null;
+        const delta = s.mean !== null && pm !== null ? Math.round(s.mean - pm) : null;
+        const [lo, hi] = settings.targets[c];
+        return (
+          <button
+            key={c}
+            className={`card cat ${selected === c ? 'sel' : ''}`}
+            style={{ ['--accent' as string]: COLOR[c] }}
+            onClick={() => onSelect(selected === c ? 'todas' : c)}
+            aria-pressed={selected === c}
+          >
+            <div className="cat-title"><span className="dot" /> {CATEGORY_LABEL[c]}</div>
+            <div className="avg">{fmt(s.mean)}<small> mg/dL</small></div>
+            <div className="muted">média · {s.count} leitura{s.count === 1 ? '' : 's'}</div>
+            {s.inRangePct !== null && (
+              <div className="meta">
+                <div className="bar"><div style={{ width: `${s.inRangePct}%` }} /></div>
+                <span>{Math.round(s.inRangePct)}% na meta ({lo}–{hi})</span>
+              </div>
+            )}
+            {delta !== null && (
+              <div className="muted">
+                {delta === 0 ? '= igual' : delta > 0 ? `▲ +${delta}` : `▼ ${delta}`} vs período anterior
+              </div>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------- Gráfico ---------------- */
+
+type View = 'leituras' | Period;
+const VIEWS: [View, string][] = [['leituras', 'Cada leitura'], ['day', 'Dia'], ['week', 'Semana'], ['month', 'Mês'], ['year', 'Ano']];
+
+export function ChartSection({
+  readings,
+  settings,
+  category,
+}: {
+  readings: StoredReading[];
+  settings: Settings;
+  category: Category | 'todas';
+}) {
+  const [view, setView] = useState<View>('leituras');
+  const cats: Category[] = category === 'todas' ? ['jejum', 'almoco', 'janta', 'outra'] : [category];
+  const band = category === 'todas' ? undefined : category === 'outra' ? undefined : settings.targets[category];
+
+  const groups = useMemo(() => (view === 'leituras' ? [] : groupByPeriod(readings, view, settings)), [readings, view, settings]);
+
+  const series: Series[] =
+    view === 'leituras'
+      ? cats.map((c) => ({
+          name: CATEGORY_LABEL[c],
+          color: COLOR[c],
+          points: readings.filter((r) => classify(r.time, settings) === c).map((r) => ({ x: toMs(r.time), y: r.mgdl })),
+        }))
+      : cats
+          .filter((c) => c !== 'outra')
+          .map((c) => ({
+            name: CATEGORY_LABEL[c],
+            color: COLOR[c],
+            line: true,
+            points: groups
+              .map((g, i) => ({ x: i, y: g.byCategory[c].mean }))
+              .filter((p): p is { x: number; y: number } => p.y !== null),
+          }));
+
+  return (
+    <section className="card">
+      <div className="section-head">
+        <h2>Evolução</h2>
+        <div className="chips small">
+          {VIEWS.map(([k, l]) => (
+            <button key={k} className={view === k ? 'chip on' : 'chip'} onClick={() => setView(k)}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <div className="legend">
+        {series.map((s) => (
+          <span key={s.name}><span className="dot" style={{ background: s.color }} /> {s.name}</span>
+        ))}
+        {band && <span className="muted">faixa azul = meta {band[0]}–{band[1]}</span>}
+      </div>
+      <Chart
+        series={series}
+        band={band}
+        xLabel={view === 'leituras' ? shortDate : (x) => (groups[Math.round(x)] ? groupLabel(groups[Math.round(x)].key, view) : '')}
+      />
+      {view !== 'leituras' && groups.length > 0 && (
+        <div className="scroll">
+          <table>
+            <thead>
+              <tr><th>{VIEWS.find(([k]) => k === view)![1]}</th><th>Leituras</th><th>Jejum</th><th>Almoço</th><th>Janta</th></tr>
+            </thead>
+            <tbody>
+              {[...groups].reverse().map((g) => (
+                <tr key={g.key}>
+                  <td>{groupLabel(g.key, view as Period)}</td>
+                  <td>{g.all.count}</td>
+                  <td>{fmt(g.byCategory.jejum.mean)}</td>
+                  <td>{fmt(g.byCategory.almoco.mean)}</td>
+                  <td>{fmt(g.byCategory.janta.mean)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ---------------- Histórico ---------------- */
+
+export function History({ readings, settings }: { readings: StoredReading[]; settings: Settings }) {
+  const [limit, setLimit] = useState(60);
+  const rows = useMemo(() => [...readings].reverse(), [readings]);
+  const shown = rows.slice(0, limit);
+  const byDay = new Map<string, StoredReading[]>();
+  for (const r of shown) (byDay.get(r.time.slice(0, 10)) ?? byDay.set(r.time.slice(0, 10), []).get(r.time.slice(0, 10))!).push(r);
+
+  if (!rows.length) return <p className="card muted">Nenhuma leitura neste período.</p>;
+  return (
+    <section>
+      {[...byDay.entries()].map(([day, rs]) => (
+        <div className="card day" key={day}>
+          <h3>{dayHeading(day)}</h3>
+          {rs.map((r) => {
+            const c = classify(r.time, settings);
+            const st = statusOf(r.mgdl, c, settings);
+            return (
+              <div className="item" key={r.key}>
+                <span className={`pill s-${st}`}>{r.mgdl}</span>
+                <span>{r.time.slice(11, 16)}</span>
+                <span className="muted"><span className="dot" style={{ background: COLOR[c] }} /> {CATEGORY_LABEL[c]}</span>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+      {rows.length > limit && (
+        <button className="chip" onClick={() => setLimit(limit + 60)}>Mostrar mais ({rows.length - limit})</button>
+      )}
+    </section>
+  );
+}
+
+/* ---------------- Ajustes ---------------- */
+
+const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const toMin = (v: string) => { const [h, m] = v.split(':').map(Number); return h * 60 + m; };
+
+const UPDATE_TEXT: Record<GlicoUpdateState['status'], string> = {
+  dev: 'Atualizações só funcionam no app instalado.',
+  'not-configured': 'Atualização automática ainda não configurada.',
+  checking: 'Verificando…',
+  none: 'Você já está na versão mais recente.',
+  available: 'Há uma versão nova disponível.',
+  downloading: 'Baixando atualização…',
+  ready: 'Atualização pronta. Reinicie para instalar.',
+  error: 'Não foi possível verificar agora.',
+};
+
+function AboutPanel() {
+  const [version, setVersion] = useState('');
+  const [up, setUp] = useState<GlicoUpdateState | null>(null);
+  useEffect(() => {
+    window.glico?.getVersion().then(setVersion).catch(() => {});
+    return window.glico?.onUpdate(setUp);
+  }, []);
+  const g = window.glico;
+  return (
+    <div className="card">
+      <h2>Sobre</h2>
+      <p>Glico {version ? `versão ${version}` : '(versão web)'}</p>
+      {g ? (
+        <>
+          <div className="row2">
+            <button className="chip" onClick={async () => { setUp({ status: 'checking' }); setUp(await g.checkUpdate()); }}>Verificar atualizações</button>
+            {up?.status === 'available' && <button className="primary small" onClick={() => g.downloadUpdate()}>Baixar {up.version}</button>}
+            {up?.status === 'ready' && <button className="primary small" onClick={() => g.installUpdate()}>Reiniciar e atualizar</button>}
+          </div>
+          {up && (
+            <p className="muted">
+              {UPDATE_TEXT[up.status]}
+              {up.status === 'downloading' && up.percent !== undefined ? ` ${up.percent}%` : ''}
+              {up.status === 'error' && up.message ? ` (${up.message})` : ''}
+            </p>
+          )}
+          <p className="muted">Backup automático das leituras em Documentos\Glico\backup.json.</p>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+export function SettingsPanel({
+  settings,
+  onChange,
+  onClear,
+}: {
+  settings: Settings;
+  onChange: (s: Settings) => void;
+  onClear: () => void;
+}) {
+  const cats = ['jejum', 'almoco', 'janta'] as const;
+  return (
+    <section>
+      <AboutPanel />
+      <div className="card">
+        <h2>Horários das medições</h2>
+        <p className="muted">Cada leitura é classificada pelo horário em que foi feita. Fora destas janelas, vira "Outras".</p>
+        {cats.map((c) => (
+          <div className="setrow" key={c}>
+            <b><span className="dot" style={{ background: COLOR[c] }} /> {CATEGORY_LABEL[c]}</b>
+            <div>
+              <input type="time" value={hhmm(settings.windows[c][0])}
+                onChange={(e) => onChange({ ...settings, windows: { ...settings.windows, [c]: [toMin(e.target.value), settings.windows[c][1]] } })} />
+              {' – '}
+              <input type="time" value={hhmm(settings.windows[c][1])}
+                onChange={(e) => onChange({ ...settings, windows: { ...settings.windows, [c]: [settings.windows[c][0], toMin(e.target.value)] } })} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="card">
+        <h2>Metas (mg/dL)</h2>
+        <p className="muted">Ponto de partida editável. Combine suas metas com seu médico.</p>
+        {cats.map((c) => (
+          <div className="setrow" key={c}>
+            <b><span className="dot" style={{ background: COLOR[c] }} /> {CATEGORY_LABEL[c]}</b>
+            <div>
+              <input type="number" value={settings.targets[c][0]}
+                onChange={(e) => onChange({ ...settings, targets: { ...settings.targets, [c]: [+e.target.value, settings.targets[c][1]] } })} />
+              {' – '}
+              <input type="number" value={settings.targets[c][1]}
+                onChange={(e) => onChange({ ...settings, targets: { ...settings.targets, [c]: [settings.targets[c][0], +e.target.value] } })} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="card">
+        <h2>Dados</h2>
+        <button className="danger" onClick={onClear}>Apagar dados deste computador</button>
+        <p className="muted">Os dados ficam só neste computador. O medidor não é alterado.</p>
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- Diálogo de importação ---------------- */
+
+export type ImportUi = { phase: 'closed' } | { phase: 'working' | 'done' | 'error'; text: string };
+
+export function ImportDialog({ ui, onClose }: { ui: ImportUi; onClose: () => void }) {
+  if (ui.phase === 'closed') return null;
+  return (
+    <div className="overlay" role="dialog" aria-modal="true">
+      <div className="dialog card">
+        {ui.phase === 'working' && <div className="spinner" />}
+        <h2>{ui.phase === 'working' ? 'Importando…' : ui.phase === 'done' ? 'Pronto!' : 'Não deu certo'}</h2>
+        <p>{ui.text}</p>
+        {ui.phase === 'working' && (
+          <ol className="muted">
+            <li>Ligue o Bluetooth do medidor.</li>
+            <li>Escolha <b>meter+…</b> na janela do navegador.</li>
+            <li>Aguarde: ele envia todas as leituras guardadas.</li>
+          </ol>
+        )}
+        {ui.phase !== 'working' && <button className="primary" onClick={onClose}>OK</button>}
+      </div>
+    </div>
+  );
+}
