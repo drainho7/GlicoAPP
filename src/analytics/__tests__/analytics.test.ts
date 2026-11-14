@@ -8,6 +8,7 @@ import {
   DEFAULT_SETTINGS,
   filterRange,
   groupByPeriod,
+  inWindow,
   normalizeTime,
   periodKey,
   previousRange,
@@ -31,6 +32,17 @@ describe('classify', () => {
   it('limites: início inclusivo, fim exclusivo', () => {
     expect(classify('2026-11-13T04:00:00')).toBe('jejum');
     expect(classify('2026-11-13T10:30:00')).toBe('outra');
+  });
+  it('janta passa da meia-noite: 00:22 conta como 2 h após janta', () => {
+    expect(classify('2026-11-14T00:22:00')).toBe('janta');
+    expect(classify('2026-11-13T23:40:00')).toBe('janta');
+    expect(classify('2026-11-14T00:59:00')).toBe('janta');
+    expect(classify('2026-11-14T01:00:00')).toBe('outra'); // fim exclusivo
+    expect(classify('2026-11-14T03:10:00')).toBe('outra');
+  });
+  it('janela comum não é afetada pela lógica de meia-noite', () => {
+    expect(inWindow(8 * 60, [4 * 60, 10 * 60])).toBe(true);
+    expect(inWindow(11 * 60, [4 * 60, 10 * 60])).toBe(false);
   });
   it('respeita janelas personalizadas', () => {
     const s = { ...DEFAULT_SETTINGS, windows: { ...DEFAULT_SETTINGS.windows, almoco: [11 * 60, 12 * 60] as [number, number] } };
@@ -93,6 +105,14 @@ describe('faixa de datas e comparativo', () => {
 });
 
 describe('statusOf e previousRange', () => {
+  it('padrões seguem a SBD: jejum 80–130, pós-refeição até 180, HbA1c < 7%', () => {
+    expect(DEFAULT_SETTINGS.targets.jejum).toEqual([80, 130]);
+    expect(DEFAULT_SETTINGS.targets.almoco[1]).toBe(180);
+    expect(DEFAULT_SETTINGS.targets.janta[1]).toBe(180);
+    expect(DEFAULT_SETTINGS.a1cTarget).toBe(7);
+    expect(statusOf(79, 'jejum')).toBe('low');
+    expect(statusOf(80, 'jejum')).toBe('ok');
+  });
   it('status por meta da categoria', () => {
     expect(statusOf(100, 'jejum')).toBe('ok');
     expect(statusOf(131, 'jejum')).toBe('high');

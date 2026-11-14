@@ -1,6 +1,6 @@
 {
     "name":  "glico-desktop",
-    "version":  "1.2.2",
+    "version":  "1.2.3",
     "description":  "Glico - controle de glicemia",
     "author":  "Glico",
     "main":  "main.js",

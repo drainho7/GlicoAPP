@@ -5,6 +5,7 @@ import {
   CATEGORY_LABEL,
   Category,
   classify,
+  DEFAULT_SETTINGS,
   estimateA1c,
   filterRange,
   groupByPeriod,
@@ -326,6 +327,7 @@ export function A1cCard({ readings, settings }: { readings: StoredReading[]; set
           <div className="avg">{pc(est.a1c)}<small> %</small></div>
           <div className="muted">média de {Math.round(est.mean)} mg/dL · {est.count} leituras em {est.days} dias</div>
           <div className="muted">últimos 90 dias ({brDate(est.windowFrom)} a {brDate(est.windowTo)}) · cobertura {est.confidence}</div>
+          <div className="muted">Meta da SBD para a maioria dos adultos: abaixo de {pc(settings.a1cTarget ?? DEFAULT_SETTINGS.a1cTarget!)}% (o seu médico pode individualizar)</div>
         </div>
         <div className="a1c-exam">
           {exam ? (
@@ -481,7 +483,10 @@ export function SettingsPanel({
       <AboutPanel />
       <div className="card">
         <h2>Horários das medições</h2>
-        <p className="muted">Cada leitura é classificada pelo horário em que foi feita. Fora destas janelas, vira "Outras".</p>
+        <p className="muted">
+          Cada leitura é classificada pelo horário em que foi feita. Fora destas janelas, vira "Outras". Se o fim for menor que o
+          início (ex.: 19:30 até 01:00), a janela passa da meia-noite.
+        </p>
         {cats.map((c) => (
           <div className="setrow" key={c}>
             <b><span className="dot" style={{ background: COLOR[c] }} /> {CATEGORY_LABEL[c]}</b>
@@ -497,8 +502,17 @@ export function SettingsPanel({
       </div>
       <ExamForm settings={settings} onChange={onChange} />
       <div className="card">
-        <h2>Metas (mg/dL)</h2>
-        <p className="muted">Ponto de partida editável. Combine suas metas com seu médico.</p>
+        <h2>Metas</h2>
+        <p className="muted">
+          O padrão segue a Sociedade Brasileira de Diabetes (SBD) para adultos com diabetes: jejum e antes das refeições 80–130 mg/dL,
+          2 h depois de comer abaixo de 180 e HbA1c abaixo de 7%. As metas são individuais: ajuste com o seu médico.
+        </p>
+        <div className="setrow">
+          <b>HbA1c (%) abaixo de</b>
+          <input type="number" step="0.1" value={settings.a1cTarget ?? DEFAULT_SETTINGS.a1cTarget}
+            onChange={(e) => onChange({ ...settings, a1cTarget: Number(e.target.value) || DEFAULT_SETTINGS.a1cTarget })} />
+        </div>
+        <p className="muted">Glicemia (mg/dL):</p>
         {cats.map((c) => (
           <div className="setrow" key={c}>
             <b><span className="dot" style={{ background: COLOR[c] }} /> {CATEGORY_LABEL[c]}</b>
@@ -511,6 +525,13 @@ export function SettingsPanel({
             </div>
           </div>
         ))}
+      </div>
+      <div className="card">
+        <h2>Restaurar padrões da SBD</h2>
+        <p className="muted">Volta as metas de glicemia e de HbA1c para os valores acima. Não altera as suas leituras.</p>
+        <button className="chip" onClick={() => onChange({ ...settings, targets: DEFAULT_SETTINGS.targets, a1cTarget: DEFAULT_SETTINGS.a1cTarget })}>
+          Restaurar metas da SBD
+        </button>
       </div>
       <div className="card">
         <h2>Dados</h2>

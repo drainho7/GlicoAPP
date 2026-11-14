@@ -131,7 +131,10 @@ export default function Report() {
                   )}
                 </div>
               )}
-              <p>Referência apenas: a HbA1c real vem do exame de laboratório. A estimativa usa a média das glicemias e tende a errar com poucas medições por dia.</p>
+              <p>
+                Meta da SBD para a maioria dos adultos: HbA1c abaixo de {pc(settings.a1cTarget ?? 7)}%. Referência apenas: a HbA1c real vem do
+                exame de laboratório. A estimativa usa a média das glicemias e tende a errar com poucas medições por dia.
+              </p>
             </section>
           )}
 
@@ -213,8 +216,8 @@ export default function Report() {
       )}
 
       <p className="r-note">
-        Horários do medidor (CareTech Precision 984) com o ajuste de fuso informado por ele. Metas de referência configuradas no app
-        (jejum {settings.targets.jejum[0]}–{settings.targets.jejum[1]}; pós-refeição {settings.targets.almoco[0]}–{settings.targets.almoco[1]} mg/dL).
+        Horários do medidor (CareTech Precision 984) com o ajuste de fuso informado por ele. Metas configuradas no app, com base nas da
+        Sociedade Brasileira de Diabetes (jejum {settings.targets.jejum[0]}–{settings.targets.jejum[1]}; pós-refeição {settings.targets.almoco[0]}–{settings.targets.almoco[1]} mg/dL).
         Este relatório é informativo e não substitui a orientação do seu médico.
       </p>
     </div>

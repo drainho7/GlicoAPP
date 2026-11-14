@@ -25,6 +25,8 @@ export interface Settings {
   windows: Record<Exclude<Category, 'outra'>, [number, number]>;
   /** Faixa alvo [mín, máx] em mg/dL, configurável pelo usuário. */
   targets: Record<Exclude<Category, 'outra'>, [number, number]>;
+  /** Meta de HbA1c (%). Padrão: abaixo de 7% para a maioria dos adultos com diabetes (SBD). */
+  a1cTarget?: number;
   /** Último exame de HbA1c informado pelo usuário (opcional). */
   exam?: ExamRef;
 }
@@ -33,10 +35,13 @@ export const DEFAULT_SETTINGS: Settings = {
   windows: {
     jejum: [4 * 60, 10 * 60 + 30],
     almoco: [13 * 60, 16 * 60],
-    janta: [19 * 60 + 30, 23 * 60],
+    janta: [19 * 60 + 30, 1 * 60], // 19:30 até 01:00 (passa da meia-noite)
   },
-  // Valores iniciais editáveis; combine as metas com seu médico.
-  targets: { jejum: [70, 130], almoco: [70, 180], janta: [70, 180] },
+  // Metas da Sociedade Brasileira de Diabetes (SBD) para adultos com diabetes (SBD/SBEM/SBC):
+  // jejum e pré-prandial 80–130 mg/dL; 2 h após a refeição < 180; HbA1c < 7%. Abaixo de 70 é hipoglicemia.
+  // São editáveis: as metas devem ser individualizadas com o médico.
+  targets: { jejum: [80, 130], almoco: [70, 180], janta: [70, 180] },
+  a1cTarget: 7,
 };
 
 export const minutesOfDay = (time: string): number => {
@@ -45,11 +50,13 @@ export const minutesOfDay = (time: string): number => {
   return +m[1] * 60 + +m[2];
 };
 
+/** Início inclusivo, fim exclusivo. Se o fim for menor que o início, a janela passa da meia-noite (ex.: 19:30–01:00). */
+export const inWindow = (t: number, [a, b]: [number, number]) => (a <= b ? t >= a && t < b : t >= a || t < b);
+
 export function classify(time: string, s: Settings = DEFAULT_SETTINGS): Category {
   const t = minutesOfDay(time);
   for (const c of ['jejum', 'almoco', 'janta'] as const) {
-    const [a, b] = s.windows[c];
-    if (t >= a && t < b) return c;
+    if (inWindow(t, s.windows[c])) return c;
   }
   return 'outra';
 }

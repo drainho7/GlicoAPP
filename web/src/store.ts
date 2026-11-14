@@ -72,7 +72,14 @@ export function clearReadings() {
 export function loadSettings(): Settings {
   try {
     const s = JSON.parse(localStorage.getItem(SK) ?? 'null');
-    return s ? { ...DEFAULT_SETTINGS, ...s } : DEFAULT_SETTINGS;
+    if (!s) return DEFAULT_SETTINGS;
+    // Migração: a janela de janta antiga (19:30–23:00), nunca personalizada, passa para o novo padrão (até 01:00).
+    const j = s.windows?.janta;
+    if (Array.isArray(j) && j[0] === 19 * 60 + 30 && j[1] === 23 * 60) s.windows.janta = DEFAULT_SETTINGS.windows.janta;
+    // Migração: meta de jejum antiga (70–130), nunca personalizada, passa para a da SBD (80–130).
+    const t = s.targets?.jejum;
+    if (Array.isArray(t) && t[0] === 70 && t[1] === 130) s.targets.jejum = DEFAULT_SETTINGS.targets.jejum;
+    return { ...DEFAULT_SETTINGS, ...s };
   } catch {
     return DEFAULT_SETTINGS;
   }
