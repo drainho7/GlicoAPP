@@ -1,47 +1,48 @@
 {
-    "name":  "glicoapp",
-    "version":  "1.0.0",
-    "main":  "index.ts",
-    "dependencies":  {
-                         "@react-native-async-storage/async-storage":  "2.2.0",
-                         "buffer":  "^6.0.3",
-                         "expo":  "~58.0.25",
-                         "expo-build-properties":  "~58.0.12",
-                         "expo-dev-client":  "~58.0.20",
-                         "expo-status-bar":  "~58.0.5",
-                         "react":  "19.3.0",
-                         "react-dom":  "^19.3.0",
-                         "react-native":  "0.88.1",
-                         "react-native-ble-plx":  "^3.5.1"
-                     },
-    "devDependencies":  {
-                            "@types/jest":  "^30.0.0",
-                            "@types/react":  "~19.3.0",
-                            "@types/react-dom":  "^19.3.0",
-                            "@types/web-bluetooth":  "^0.0.22",
-                            "@vitejs/plugin-react":  "^6.3.0",
-                            "jest":  "^30.5.2",
-                            "jest-expo":  "^58.0.14",
-                            "ts-jest":  "^29.4.15",
-                            "typescript":  "~6.0.3",
-                            "vite":  "^8.3.8"
-                        },
-    "scripts":  {
-                    "start":  "expo start",
-                    "android":  "expo start --android",
-                    "ios":  "expo start --ios",
-                    "test":  "jest",
-                    "typecheck":  "tsc --noEmit",
-                    "web:typecheck":  "tsc -p web/tsconfig.json",
-                    "desktop:dist":  "npm --prefix desktop run dist",
-                    "web":  "vite --config web/vite.config.ts web",
-                    "web:build":  "vite build --config web/vite.config.ts web"
-                },
-    "private":  true,
-    "jest":  {
-                 "preset":  "jest-expo",
-                 "testPathIgnorePatterns":  [
-                                                "/node_modules/"
-                                            ]
-             }
+    "name": "glicoapp",
+    "version": "1.0.0",
+    "main": "index.ts",
+    "dependencies": {
+        "@react-native-async-storage/async-storage": "2.2.0",
+        "buffer": "^6.0.3",
+        "expo": "~58.0.25",
+        "expo-build-properties": "~58.0.12",
+        "expo-dev-client": "~58.0.20",
+        "expo-status-bar": "~58.0.5",
+        "react": "19.3.0",
+        "react-dom": "^19.3.0",
+        "react-native": "0.88.1",
+        "react-native-ble-plx": "^3.5.1",
+        "read-excel-file": "^9.3.17"
+    },
+    "devDependencies": {
+        "@types/jest": "^30.0.0",
+        "@types/react": "~19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "@types/web-bluetooth": "^0.0.22",
+        "@vitejs/plugin-react": "^6.3.0",
+        "jest": "^30.5.2",
+        "jest-expo": "^58.0.14",
+        "ts-jest": "^29.4.15",
+        "typescript": "~6.0.3",
+        "vite": "^8.3.8"
+    },
+    "scripts": {
+        "start": "expo start",
+        "android": "expo start --android",
+        "ios": "expo start --ios",
+        "test": "jest",
+        "typecheck": "tsc --noEmit",
+        "web:typecheck": "tsc -p web/tsconfig.json",
+        "desktop:dist": "npm --prefix desktop run dist",
+        "web": "vite --config web/vite.config.ts web",
+        "web:build": "vite build --config web/vite.config.ts web"
+    },
+    "private": true,
+    "jest": {
+        "preset": "jest-expo",
+        "testPathIgnorePatterns": [
+            "/node_modules/"
+        ]
+    }
 }

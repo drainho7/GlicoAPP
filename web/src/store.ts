@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, normalizeTime, Reading, Settings } from '../../src/analytics/analytics';
+import { BodyReading, mergeBody } from '../../src/body/body';
 
 export interface StoredReading extends Reading {
   baseTime: string;
@@ -13,10 +14,14 @@ const SK = 'glico.web.settings.v1';
 export const METER_ID = 'caretech';
 export const makeKey = (sequence: number, baseTime: string) => `${METER_ID}|${sequence}|${baseTime}`;
 
+const BK = 'glico.web.body.v1';
+
 /** Cópia de segurança em Documentos\Glico\backup.json (só no app de Windows). */
 function backup() {
   try {
-    void window.glico?.backupSave(JSON.stringify({ version: 1, readings: loadReadings(), settings: loadSettings() }));
+    void window.glico?.backupSave(
+      JSON.stringify({ version: 2, readings: loadReadings(), body: loadBody(), settings: loadSettings() }),
+    );
   } catch {
     /* backup é best-effort */
   }
@@ -24,23 +29,50 @@ function backup() {
 
 /** Ao abrir o app: garante que já existe cópia de segurança dos dados atuais (ex.: vindos da versão anterior). */
 export function ensureBackup() {
-  if (window.glico && loadReadings().length) backup();
+  if (window.glico && (loadReadings().length || loadBody().length)) backup();
 }
 
 /** Se o armazenamento local estiver vazio (reinstalação, perfil apagado), restaura do backup. */
 export async function restoreFromBackup(): Promise<boolean> {
-  if (!window.glico || loadReadings().length) return false;
+  if (!window.glico) return false;
+  const needGlucose = loadReadings().length === 0;
+  const needBody = loadBody().length === 0;
+  if (!needGlucose && !needBody) return false;
   try {
     const txt = await window.glico.backupLoad();
     if (!txt) return false;
-    const b = JSON.parse(txt) as { readings?: StoredReading[]; settings?: Settings };
-    if (!Array.isArray(b.readings) || !b.readings.length) return false;
-    localStorage.setItem(RK, JSON.stringify(b.readings));
-    if (b.settings) localStorage.setItem(SK, JSON.stringify(b.settings));
-    return true;
+    const b = JSON.parse(txt) as { readings?: StoredReading[]; body?: BodyReading[]; settings?: Settings };
+    let restored = false;
+    if (needGlucose && Array.isArray(b.readings) && b.readings.length) {
+      localStorage.setItem(RK, JSON.stringify(b.readings));
+      if (b.settings) localStorage.setItem(SK, JSON.stringify(b.settings));
+      restored = true;
+    }
+    if (needBody && Array.isArray(b.body) && b.body.length) {
+      localStorage.setItem(BK, JSON.stringify(b.body));
+      restored = true;
+    }
+    return restored;
   } catch {
     return false;
   }
+}
+
+/* ---------------- Bioimpedância ---------------- */
+
+export function loadBody(): BodyReading[] {
+  try {
+    return JSON.parse(localStorage.getItem(BK) ?? '[]');
+  } catch {
+    return [];
+  }
+}
+
+export function addBody(incoming: BodyReading[]): { added: number; all: BodyReading[] } {
+  const m = mergeBody(loadBody(), incoming);
+  localStorage.setItem(BK, JSON.stringify(m.all));
+  backup();
+  return m;
 }
 
 export function loadReadings(): StoredReading[] {
@@ -66,6 +98,7 @@ export function mergeReadings(incoming: StoredReading[]): { added: number; all: 
 
 export function clearReadings() {
   localStorage.removeItem(RK);
+  localStorage.removeItem(BK);
   backup(); // o backup também fica vazio: apagar é apagar de verdade
 }
 

@@ -16,8 +16,9 @@ import {
   statusOf,
   summarizeByCategory,
 } from '../../src/analytics/analytics';
-import { Chart, Series } from './Chart';
-import { addDays, dayHeading, friendlyTime, groupLabel, shortDate } from './format';
+import { Chart, ChartPoint, Series, targetRefLines } from './Chart';
+import { ageAt } from '../../src/body/body';
+import { addDays, dayHeading, friendlyTime, groupLabel, localToday, shortDate } from './format';
 import { StoredReading } from './store';
 
 /** Cor da linha "Geral": acompanha o texto do tema (clara no escuro, escura no claro). */
@@ -244,18 +245,31 @@ export function ChartSection({
 
   const groups = useMemo(() => (view === 'leituras' ? [] : groupByPeriod(readings, view, settings)), [readings, view, settings]);
 
-  type Pt = { x: number; y: number };
-  const notNull = (p: { x: number; y: number | null }): p is Pt => p.y !== null;
-  const pointsFor = (c: Category | 'todas'): Pt[] =>
+  type Pt = ChartPoint;
+  // withStatus: marca (anel) o que está acima/abaixo da meta da categoria de cada leitura.
+  const pointsFor = (c: Category | 'todas', withStatus = false): Pt[] =>
     view === 'leituras'
-      ? readings.filter((r) => c === 'todas' || classify(r.time, settings) === c).map((r) => ({ x: toMs(r.time), y: r.mgdl }))
-      : groups.map((g, i) => ({ x: i, y: c === 'todas' ? g.all.mean : g.byCategory[c].mean })).filter(notNull);
+      ? readings
+          .filter((r) => c === 'todas' || classify(r.time, settings) === c)
+          .map((r) => ({
+            x: toMs(r.time),
+            y: r.mgdl,
+            status: withStatus ? statusOf(r.mgdl, classify(r.time, settings), settings) : undefined,
+          }))
+      : groups.flatMap((g, i): Pt[] => {
+          const y = c === 'todas' ? g.all.mean : g.byCategory[c].mean;
+          if (y === null) return [];
+          return [{ x: i, y, status: withStatus && c !== 'todas' ? statusOf(y, c, settings) : undefined }];
+        });
 
   // "Geral": todas as leituras juntas (inclusive as fora das janelas de horário), numa linha contínua.
   // Com um momento selecionado, a linha principal passa a ser a dele. A tendência é uma reta linear tracejada.
   const mainName = category === 'todas' ? 'Geral' : CATEGORY_LABEL[category];
   const mainColor = category === 'todas' ? GERAL_COLOR : COLOR[category];
-  const mainPoints = pointsFor(category);
+  const mainPoints = pointsFor(category, true);
+  const highCount = mainPoints.filter((p) => p.status === 'high').length;
+  const lowCount = mainPoints.filter((p) => p.status === 'low').length;
+  const refLines = category === 'todas' ? targetRefLines(settings) : [];
   const trend = linearTrend(mainPoints);
   const xs = mainPoints.map((p) => p.x);
   const trendSeries: Series[] = trend
@@ -289,11 +303,14 @@ export function ChartSection({
         {series.map((s) => (
           <span key={s.name}><span className="dot" style={{ background: s.color }} /> {s.name}</span>
         ))}
+        {highCount > 0 && <span><span className="ring high" /> Acima da meta ({highCount})</span>}
+        {lowCount > 0 && <span><span className="ring low" /> Abaixo da meta ({lowCount})</span>}
         {band && <span className="muted">faixa azul = meta {band[0]}–{band[1]}</span>}
       </div>
       <Chart
         series={series}
         band={band}
+        refLines={refLines}
         xLabel={view === 'leituras' ? shortDate : (x) => (groups[Math.round(x)] ? groupLabel(groups[Math.round(x)].key, view) : '')}
       />
       {view !== 'leituras' && groups.length > 0 && (
@@ -484,6 +501,67 @@ function AboutPanel() {
   );
 }
 
+function ProfileForm({ settings, onChange }: { settings: Settings; onChange: (s: Settings) => void }) {
+  const p = settings.profile ?? {};
+  const [f, setF] = useState({
+    sex: p.sex ?? '',
+    birth: p.birth ?? '',
+    height: p.heightCm !== undefined ? String(p.heightCm) : '',
+    start: p.startWeightKg !== undefined ? String(p.startWeightKg).replace('.', ',') : '',
+  });
+  const today = localToday();
+  const parse = (s: string) => {
+    const n = Number(s.replace(',', '.'));
+    return s.trim() !== '' && Number.isFinite(n) ? n : undefined;
+  };
+  const update = (patch: Partial<typeof f>) => {
+    const next = { ...f, ...patch };
+    setF(next);
+    const h = parse(next.height);
+    const w = parse(next.start);
+    onChange({
+      ...settings,
+      profile: {
+        sex: next.sex === 'M' || next.sex === 'F' ? next.sex : undefined,
+        birth: /^\d{4}-\d{2}-\d{2}$/.test(next.birth) && next.birth <= today ? next.birth : undefined,
+        heightCm: h !== undefined && h >= 100 && h <= 250 ? Math.round(h) : undefined,
+        startWeightKg: w !== undefined && w >= 20 && w <= 400 ? Math.round(w * 100) / 100 : undefined,
+      },
+    });
+  };
+  const age = ageAt(settings.profile?.birth, today);
+  return (
+    <div className="card">
+      <h2>Seu perfil</h2>
+      <p className="muted">
+        Usado para calcular a idade, escolher as faixas de referência por sexo na aba Corpo e mostrar a evolução desde o início.
+        Fica só neste computador.
+      </p>
+      <div className="setrow">
+        <b>Sexo</b>
+        <select value={f.sex} onChange={(e) => update({ sex: e.target.value })}>
+          <option value="">Não informado</option>
+          <option value="M">Masculino</option>
+          <option value="F">Feminino</option>
+        </select>
+      </div>
+      <div className="setrow">
+        <b>Data de nascimento{age !== null ? ` · ${age} anos` : ''}</b>
+        <input type="date" value={f.birth} max={today} onChange={(e) => update({ birth: e.target.value })} />
+      </div>
+      <div className="setrow">
+        <b>Altura (cm)</b>
+        <input inputMode="numeric" placeholder="ex.: 170" value={f.height} style={{ width: 90 }} onChange={(e) => update({ height: e.target.value })} />
+      </div>
+      <div className="setrow">
+        <b>Peso inicial (kg)</b>
+        <input inputMode="decimal" placeholder="ex.: 85,0" value={f.start} style={{ width: 90 }} onChange={(e) => update({ start: e.target.value })} />
+      </div>
+      <p className="muted saved">✓ Salvo automaticamente. Campos vazios ou fora do normal são ignorados.</p>
+    </div>
+  );
+}
+
 function ExamForm({ settings, onChange }: { settings: Settings; onChange: (s: Settings) => void }) {
   const [value, setValue] = useState(settings.exam ? String(settings.exam.value).replace('.', ',') : '');
   const [date, setDate] = useState(settings.exam?.date ?? '');
@@ -531,6 +609,7 @@ export function SettingsPanel({
     <section>
       <p className="muted autosave">✓ As alterações nesta tela são salvas automaticamente.</p>
       <AboutPanel />
+      <ProfileForm settings={settings} onChange={onChange} />
       <div className="card">
         <h2>Horários das medições</h2>
         <p className="muted">

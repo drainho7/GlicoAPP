@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { readSheet } from 'read-excel-file/browser';
 import { Category, filterRange, previousRange, Settings } from '../../src/analytics/analytics';
+import { BodyReading, parseBodyRows } from '../../src/body/body';
+import { BodyScreen } from './body';
 import { importFromMeter } from './bluetooth';
 import {
   A1cCard,
@@ -17,9 +20,11 @@ import {
   SettingsPanel,
 } from './components';
 import {
+  addBody,
   clearReadings,
   ensureBackup,
   fromScriptJson,
+  loadBody,
   loadReadings,
   loadSettings,
   mergeReadings,
@@ -28,10 +33,12 @@ import {
   StoredReading,
 } from './store';
 
-type Screen = 'inicio' | 'historico' | 'ajustes';
+type Screen = 'inicio' | 'historico' | 'corpo' | 'ajustes';
 
 export default function App() {
   const [all, setAll] = useState<StoredReading[]>(loadReadings);
+  const [body, setBody] = useState<BodyReading[]>(loadBody);
+  const [bodyBusy, setBodyBusy] = useState(false);
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [screen, setScreen] = useState<Screen>('inicio');
   const [preset, setPreset] = useState<Preset>('30');
@@ -41,6 +48,7 @@ export default function App() {
   const [ui, setUi] = useState<ImportUi>({ phase: 'closed' });
   const [toast, setToast] = useState('');
   const [reportOpen, setReportOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   // App instalado: se o armazenamento estiver vazio, restaura de Documentos\Glico\backup.json.
   useEffect(() => {
@@ -48,8 +56,9 @@ export default function App() {
     restoreFromBackup().then((ok) => {
       if (!ok) return;
       setAll(loadReadings());
+      setBody(loadBody());
       setSettings(loadSettings());
-      setToast('Leituras restauradas do backup.');
+      setToast('Dados restaurados do backup.');
     });
   }, []);
 
@@ -70,6 +79,60 @@ export default function App() {
     const t = setTimeout(() => setToast(''), 4000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // App de Windows: planilhas largadas em Documentos\Glico\Importar entram sozinhas e são movidas depois.
+  useEffect(() => {
+    return window.glico?.onImportFile(async ({ name, bytes }) => {
+      setScreen('corpo');
+      const ok = await importBody(new Blob([bytes as BlobPart]), name);
+      await window.glico?.importFileDone({ name, ok });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Arrastar e soltar uma planilha .xlsx em qualquer tela. Sempre cancela o comportamento padrão com arquivos,
+  // senão a janela "abriria" o arquivo e sairia do app.
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+    const onOver = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth++;
+      setDragging(true);
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      const xlsx = Array.from(e.dataTransfer?.files ?? []).find((f) => /\.xlsx$/i.test(f.name));
+      if (!xlsx) {
+        setToast('Solte um arquivo .xlsx exportado pelo app da balança (OKOK).');
+        return;
+      }
+      setScreen('corpo');
+      void importBody(xlsx, xlsx.name);
+    };
+    window.addEventListener('dragover', onOver);
+    window.addEventListener('dragenter', onEnter);
+    window.addEventListener('dragleave', onLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onOver);
+      window.removeEventListener('dragenter', onEnter);
+      window.removeEventListener('dragleave', onLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const last = all[all.length - 1];
   const anchor = last ? last.time.slice(0, 10) : new Date().toISOString().slice(0, 10);
@@ -127,6 +190,28 @@ export default function App() {
     setToast(res.ok ? '' : `Falha ao gerar o relatório: ${res.error}`);
   };
 
+  // Planilha exportada pelo app da balança (OKOK): traz todas as métricas como o app mostra.
+  const importBody = async (file: Blob, label?: string): Promise<boolean> => {
+    const prefix = label ? `“${label}”: ` : '';
+    setBodyBusy(true);
+    try {
+      const parsed = parseBodyRows((await readSheet(file)) as unknown[][]);
+      if (!parsed.readings.length) throw new Error('a planilha não tem pesagens válidas.');
+      const m = addBody(parsed.readings);
+      setBody(m.all);
+      setToast(
+        `${prefix}planilha lida: ${parsed.readings.length} pesagens, ${m.added} nova${m.added === 1 ? '' : 's'}` +
+          (parsed.skipped ? ` (${parsed.skipped} linhas ignoradas).` : '.'),
+      );
+      return true;
+    } catch (e) {
+      setToast(`${prefix}não consegui ler a planilha: ${(e as Error).message}`);
+      return false;
+    } finally {
+      setBodyBusy(false);
+    }
+  };
+
   const updateSettings = (s: Settings) => {
     setSettings(s);
     saveSettings(s);
@@ -137,13 +222,23 @@ export default function App() {
       <header>
         <h1>Glico</h1>
         <nav>
-          {([['inicio', 'Início'], ['historico', 'Histórico'], ['ajustes', 'Ajustes']] as [Screen, string][]).map(([k, l]) => (
+          {([['inicio', 'Início'], ['historico', 'Histórico'], ['corpo', 'Corpo'], ['ajustes', 'Ajustes']] as [Screen, string][]).map(([k, l]) => (
             <button key={k} className={screen === k ? 'tab on' : 'tab'} onClick={() => setScreen(k)}>{l}</button>
           ))}
         </nav>
       </header>
 
-      {screen !== 'ajustes' && (
+      {screen === 'corpo' && (
+        <BodyScreen
+          readings={body}
+          onImport={(f) => void importBody(f)}
+          busy={bodyBusy}
+          profile={settings.profile}
+          onOpenFolder={window.glico ? () => void window.glico!.openImportFolder() : undefined}
+        />
+      )}
+
+      {(screen === 'inicio' || screen === 'historico') && (
         <>
           {screen === 'inicio' && <Hero last={last} settings={settings} busy={ui.phase === 'working'} onImport={doImport} />}
           {all.length === 0 ? (
@@ -179,14 +274,16 @@ export default function App() {
           settings={settings}
           onChange={updateSettings}
           onClear={() => {
-            if (confirm('Apagar as leituras salvas neste navegador? O medidor não é afetado.')) {
+            if (confirm('Apagar as leituras de glicemia e as pesagens salvas neste computador? O medidor e a balança não são afetados.')) {
               clearReadings();
               setAll([]);
+              setBody([]);
             }
           }}
         />
       )}
 
+      {dragging && <div className="dropzone">📥 Solte a planilha do OKOK (.xlsx) para importar</div>}
       {toast && <div className="toast">{toast}</div>}
       <ImportDialog ui={ui} onClose={() => setUi({ phase: 'closed' })} />
       {reportOpen && <ReportDialog readings={all} anchor={anchor} onClose={() => setReportOpen(false)} onConfirm={exportPdf} />}

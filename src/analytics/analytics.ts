@@ -20,6 +20,16 @@ export const CATEGORY_LABEL: Record<Category, string> = {
   outra: 'Outras',
 };
 
+/** Dados do próprio usuário, digitados por ele em Ajustes (ficam só neste computador). */
+export interface UserProfile {
+  sex?: 'M' | 'F';
+  /** Data de nascimento "YYYY-MM-DD": a idade é calculada a partir dela. */
+  birth?: string;
+  heightCm?: number;
+  /** Peso de partida (kg), para acompanhar a evolução desde o início. */
+  startWeightKg?: number;
+}
+
 /** Janelas em minutos desde 00:00, [início, fim). */
 export interface Settings {
   windows: Record<Exclude<Category, 'outra'>, [number, number]>;
@@ -29,6 +39,8 @@ export interface Settings {
   a1cTarget?: number;
   /** Último exame de HbA1c informado pelo usuário (opcional). */
   exam?: ExamRef;
+  /** Sexo, nascimento, altura e peso inicial (opcionais). */
+  profile?: UserProfile;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

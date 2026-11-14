@@ -10,6 +10,6 @@
     "skipLibCheck": true,
     "types": ["web-bluetooth", "vite/client"]
   },
-  "include": ["src", "../src/analytics", "../src/ble/glucoseParser.ts"],
+  "include": ["src", "../src/analytics", "../src/body", "../src/ble/glucoseParser.ts"],
   "exclude": ["../src/**/__tests__"]
 }

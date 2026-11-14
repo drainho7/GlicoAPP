@@ -13,7 +13,7 @@ import {
   summarizeByCategory,
   Status,
 } from '../../src/analytics/analytics';
-import { Chart, Series } from './Chart';
+import { Chart, Series, targetRefLines } from './Chart';
 import { groupLabel, shortDate } from './format';
 import './report.css';
 import { loadReadings, loadSettings } from './store';
@@ -66,7 +66,14 @@ export default function Report() {
   }, [rs, settings]);
 
   // Linha "Geral" (todas as leituras), os três momentos por cima e a tendência linear tracejada.
-  const geralPoints = rs.map((r) => ({ x: toMs(r.time), y: r.mgdl }));
+  const geralPoints = rs.map((r) => ({
+    x: toMs(r.time),
+    y: r.mgdl,
+    // anel nas leituras acima/abaixo da meta da própria categoria
+    status: statusOf(r.mgdl, classify(r.time, settings), settings),
+  }));
+  const highCount = geralPoints.filter((p) => p.status === 'high').length;
+  const lowCount = geralPoints.filter((p) => p.status === 'low').length;
   const trend = linearTrend(geralPoints);
   const txs = geralPoints.map((p) => p.x);
   const series: Series[] = [
@@ -187,8 +194,10 @@ export default function Report() {
               {series.filter((s) => s.points.length).map((s) => (
                 <span key={s.name}><i style={{ background: s.color }} /> {s.name}</span>
               ))}
+              {highCount > 0 && <span><span className="ring high" /> Acima da meta ({highCount})</span>}
+              {lowCount > 0 && <span><span className="ring low" /> Abaixo da meta ({lowCount})</span>}
             </div>
-            <Chart series={series} xLabel={shortDate} height={230} />
+            <Chart series={series} xLabel={shortDate} height={230} refLines={targetRefLines(settings)} />
           </section>
 
           <h2>Médias por {period === 'day' ? 'dia' : period === 'week' ? 'semana' : 'mês'}</h2>

@@ -9,7 +9,9 @@ registerAppScheme();
 
 /* ---------------- Backup automático (Documentos\Glico\backup.json) ---------------- */
 
-const backupDir = () => path.join(app.getPath('documents'), 'Glico');
+// GLICO_DOCS_DIR existe só para testes automatizados (não mexer na pasta Documentos real).
+const docsDir = () => process.env.GLICO_DOCS_DIR || app.getPath('documents');
+const backupDir = () => path.join(docsDir(), 'Glico');
 const backupFile = () => path.join(backupDir(), 'backup.json');
 
 ipcMain.handle('backup-save', (_e, json) => {
@@ -33,6 +35,108 @@ ipcMain.handle('backup-load', () => {
 });
 
 ipcMain.handle('app-version', () => app.getVersion());
+
+/* ---------------- Pasta de importação (Documentos\Glico\Importar) ---------------- */
+
+const importDir = () => path.join(backupDir(), 'Importar');
+const doneDir = () => path.join(backupDir(), 'Importados');
+const errorDir = () => path.join(backupDir(), 'Erro');
+
+let importTarget = null; // janela que está pronta para receber planilhas
+let importWatcher = null;
+const inFlight = new Set();
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Espera o arquivo terminar de ser gravado/baixado (tamanho estável por 2 leituras). */
+async function waitStable(file) {
+  let last = -1;
+  for (let i = 0; i < 25; i++) {
+    let size;
+    try {
+      size = fs.statSync(file).size;
+    } catch {
+      return false;
+    }
+    if (size > 0 && size === last) return true;
+    last = size;
+    await sleep(800);
+  }
+  return false;
+}
+
+async function processImportFile(name) {
+  // Só planilhas .xlsx, nunca arquivos temporários do Excel (~$...), e só o nome simples (sem subpastas).
+  if (name !== path.basename(name) || !/\.xlsx$/i.test(name) || name.startsWith('~$')) return;
+  if (!importTarget || importTarget.isDestroyed() || inFlight.has(name)) return;
+  const file = path.join(importDir(), name);
+  // Evento de remoção (acontece ao mover o arquivo para Importados): não há nada a importar.
+  if (!fs.existsSync(file)) return;
+  inFlight.add(name);
+  let sent = false;
+  try {
+    if (!(await waitStable(file))) return;
+    importTarget.send('import-file', { name, bytes: fs.readFileSync(file) });
+    sent = true;
+    // Rede de segurança: se a tela nunca responder, libera o nome depois de 2 minutos.
+    setTimeout(() => inFlight.delete(name), 120_000).unref();
+  } catch (e) {
+    console.error('import: falha ao ler', name, e.message);
+  } finally {
+    // Só mantém o nome "em andamento" se o arquivo foi de fato entregue à tela
+    // (nesse caso 'import-file-done' libera). Qualquer outro caminho precisa liberar,
+    // senão uma planilha futura com o mesmo nome ficaria presa para sempre.
+    if (!sent) inFlight.delete(name);
+  }
+}
+
+function startImportFolder() {
+  fs.mkdirSync(importDir(), { recursive: true });
+  for (const n of fs.readdirSync(importDir())) void processImportFile(n); // o que já estava na pasta
+  if (importWatcher) return;
+  try {
+    const timers = new Map();
+    importWatcher = fs.watch(importDir(), (_evt, filename) => {
+      if (!filename) return;
+      const name = String(filename);
+      clearTimeout(timers.get(name));
+      timers.set(name, setTimeout(() => void processImportFile(name), 500)); // junta eventos repetidos
+    });
+    importWatcher.on('error', () => {
+      importWatcher = null;
+    });
+  } catch (e) {
+    console.error('import: não foi possível vigiar a pasta:', e.message);
+  }
+}
+
+ipcMain.on('import-ready', (e) => {
+  importTarget = e.sender;
+  startImportFolder();
+});
+
+/** O app terminou de importar: move a planilha para Importados (ok) ou Erro (falha). */
+ipcMain.handle('import-file-done', (_e, r = {}) => {
+  const name = typeof r.name === 'string' ? path.basename(r.name) : '';
+  inFlight.delete(name);
+  if (!name) return;
+  const from = path.join(importDir(), name);
+  if (!fs.existsSync(from)) return;
+  const destDir = r.ok ? doneDir() : errorDir();
+  fs.mkdirSync(destDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  try {
+    fs.renameSync(from, path.join(destDir, `${stamp}_${name}`));
+  } catch (e) {
+    console.error('import: não consegui mover', name, e.message);
+  }
+});
+
+ipcMain.handle('import-open-folder', async () => {
+  fs.mkdirSync(importDir(), { recursive: true });
+  await shell.openPath(importDir());
+  return importDir();
+});
 
 /* ---------------- Relatório em PDF ---------------- */
 
