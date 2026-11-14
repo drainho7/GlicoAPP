@@ -9,6 +9,7 @@ import {
   estimateA1c,
   filterRange,
   groupByPeriod,
+  linearTrend,
   Period,
   Settings,
   Status,
@@ -19,6 +20,8 @@ import { Chart, Series } from './Chart';
 import { addDays, dayHeading, friendlyTime, groupLabel, shortDate } from './format';
 import { StoredReading } from './store';
 
+/** Cor da linha "Geral": acompanha o texto do tema (clara no escuro, escura no claro). */
+const GERAL_COLOR = 'var(--fg)';
 export const COLOR: Record<Category, string> = { jejum: '#42a5f5', almoco: '#ffca28', janta: '#ba68c8', outra: '#9e9e9e' };
 const STATUS_TEXT: Record<Status, string> = { ok: 'Dentro da meta', high: 'Acima da meta', low: 'Abaixo da meta' };
 const toMs = (t: string) => Date.parse(t + 'Z'); // só posiciona no eixo; sem conversão de fuso
@@ -236,28 +239,41 @@ export function ChartSection({
   category: Category | 'todas';
 }) {
   const [view, setView] = useState<View>('leituras');
-  const cats: Category[] = category === 'todas' ? ['jejum', 'almoco', 'janta', 'outra'] : [category];
-  const band = category === 'todas' ? undefined : category === 'outra' ? undefined : settings.targets[category];
+  const shown: Category[] = category === 'todas' ? ['jejum', 'almoco', 'janta'] : [];
+  const band = category === 'todas' || category === 'outra' ? undefined : settings.targets[category];
 
   const groups = useMemo(() => (view === 'leituras' ? [] : groupByPeriod(readings, view, settings)), [readings, view, settings]);
 
-  const series: Series[] =
+  type Pt = { x: number; y: number };
+  const notNull = (p: { x: number; y: number | null }): p is Pt => p.y !== null;
+  const pointsFor = (c: Category | 'todas'): Pt[] =>
     view === 'leituras'
-      ? cats.map((c) => ({
-          name: CATEGORY_LABEL[c],
-          color: COLOR[c],
-          points: readings.filter((r) => classify(r.time, settings) === c).map((r) => ({ x: toMs(r.time), y: r.mgdl })),
-        }))
-      : cats
-          .filter((c) => c !== 'outra')
-          .map((c) => ({
-            name: CATEGORY_LABEL[c],
-            color: COLOR[c],
-            line: true,
-            points: groups
-              .map((g, i) => ({ x: i, y: g.byCategory[c].mean }))
-              .filter((p): p is { x: number; y: number } => p.y !== null),
-          }));
+      ? readings.filter((r) => c === 'todas' || classify(r.time, settings) === c).map((r) => ({ x: toMs(r.time), y: r.mgdl }))
+      : groups.map((g, i) => ({ x: i, y: c === 'todas' ? g.all.mean : g.byCategory[c].mean })).filter(notNull);
+
+  // "Geral": todas as leituras juntas (inclusive as fora das janelas de horário), numa linha contínua.
+  // Com um momento selecionado, a linha principal passa a ser a dele. A tendência é uma reta linear tracejada.
+  const mainName = category === 'todas' ? 'Geral' : CATEGORY_LABEL[category];
+  const mainColor = category === 'todas' ? GERAL_COLOR : COLOR[category];
+  const mainPoints = pointsFor(category);
+  const trend = linearTrend(mainPoints);
+  const xs = mainPoints.map((p) => p.x);
+  const trendSeries: Series[] = trend
+    ? [{
+        name: 'Tendência',
+        color: mainColor,
+        line: true,
+        dashed: true,
+        noDots: true,
+        points: [Math.min(...xs), Math.max(...xs)].map((x) => ({ x, y: Math.round((trend.intercept + trend.slope * x) * 10) / 10 })),
+      }]
+    : [];
+
+  const series: Series[] = [
+    { name: mainName, color: mainColor, line: true, points: mainPoints },
+    ...shown.map((c) => ({ name: CATEGORY_LABEL[c], color: COLOR[c], line: view !== 'leituras', points: pointsFor(c) })),
+    ...trendSeries,
+  ];
 
   return (
     <section className="card">
@@ -358,9 +374,37 @@ export function A1cCard({ readings, settings }: { readings: StoredReading[]; set
 
 /* ---------------- Histórico ---------------- */
 
-export function History({ readings, settings }: { readings: StoredReading[]; settings: Settings }) {
+const CAT_CHIPS: [Category | 'todas', string][] = [
+  ['todas', 'Todas'],
+  ['jejum', 'Jejum'],
+  ['almoco', '2 h após almoço'],
+  ['janta', '2 h após janta'],
+];
+
+export function CategoryChips({ selected, onSelect }: { selected: Category | 'todas'; onSelect: (c: Category | 'todas') => void }) {
+  return (
+    <div className="chips catchips">
+      {CAT_CHIPS.map(([k, l]) => (
+        <button key={k} className={selected === k ? 'chip on' : 'chip'} onClick={() => onSelect(k)}>{l}</button>
+      ))}
+    </div>
+  );
+}
+
+export function History({
+  readings,
+  settings,
+  category = 'todas',
+}: {
+  readings: StoredReading[];
+  settings: Settings;
+  category?: Category | 'todas';
+}) {
   const [limit, setLimit] = useState(60);
-  const rows = useMemo(() => [...readings].reverse(), [readings]);
+  const rows = useMemo(
+    () => [...readings].reverse().filter((r) => category === 'todas' || classify(r.time, settings) === category),
+    [readings, category, settings],
+  );
   const shown = rows.slice(0, limit);
   const byDay = new Map<string, StoredReading[]>();
   for (const r of shown) (byDay.get(r.time.slice(0, 10)) ?? byDay.set(r.time.slice(0, 10), []).get(r.time.slice(0, 10))!).push(r);
@@ -461,6 +505,11 @@ function ExamForm({ settings, onChange }: { settings: Settings; onChange: (s: Se
         <b>Data do exame</b>
         <input type="date" value={date} onChange={(e) => { setDate(e.target.value); commit(value, e.target.value); }} />
       </div>
+      <p className="muted saved">
+        {settings.exam
+          ? `✓ Salvo automaticamente: ${pc(settings.exam.value)}% em ${brDate(settings.exam.date)}`
+          : 'Preencha o resultado e a data: o app salva sozinho.'}
+      </p>
       {(value || date) && (
         <button className="danger" onClick={() => { setValue(''); setDate(''); onChange({ ...settings, exam: undefined }); }}>Remover exame</button>
       )}
@@ -480,6 +529,7 @@ export function SettingsPanel({
   const cats = ['jejum', 'almoco', 'janta'] as const;
   return (
     <section>
+      <p className="muted autosave">✓ As alterações nesta tela são salvas automaticamente.</p>
       <AboutPanel />
       <div className="card">
         <h2>Horários das medições</h2>

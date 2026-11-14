@@ -78,6 +78,9 @@ button.danger { background: transparent; color: var(--low); border: 1px solid va
 button.primary.small { padding: 8px 14px; font-size: 14px; min-height: 0; border-radius: 999px; }
 .dates { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
 .chips.center, .dates.center, .row2.center { justify-content: center; }
+.catchips { margin: 12px 0 0; }
+.saved { color: var(--ok); margin: 10px 0 0; }
+.autosave { margin: 4px 4px 0; }
 .period-note { margin: 8px 2px 0; font-size: 13px; }
 .report-range { margin: 16px 0 12px; font-size: 17px; }
 .dialog .chips { margin-top: 6px; }

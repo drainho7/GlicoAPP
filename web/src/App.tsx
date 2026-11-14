@@ -4,6 +4,7 @@ import { importFromMeter } from './bluetooth';
 import {
   A1cCard,
   CategoryCards,
+  CategoryChips,
   ChartSection,
   Hero,
   History,
@@ -161,7 +162,13 @@ export default function App() {
                   <A1cCard readings={all} settings={settings} />
                 </>
               )}
-              {screen === 'historico' && <History readings={current} settings={settings} />}
+              {screen === 'historico' && (
+                <>
+                  <CategoryChips selected={category} onSelect={setCategory} />
+                  <ChartSection readings={current} settings={settings} category={category} />
+                  <History readings={current} settings={settings} category={category} />
+                </>
+              )}
             </>
           )}
         </>

@@ -6,6 +6,7 @@ import {
   estimateA1c,
   filterRange,
   groupByPeriod,
+  linearTrend,
   Period,
   previousRange,
   statusOf,
@@ -64,11 +65,28 @@ export default function Report() {
     return Math.round((ok / rs.length) * 100);
   }, [rs, settings]);
 
-  const series: Series[] = (['jejum', 'almoco', 'janta', 'outra'] as const).map((c) => ({
-    name: CATEGORY_LABEL[c],
-    color: COLOR[c],
-    points: rs.filter((r) => classify(r.time, settings) === c).map((r) => ({ x: toMs(r.time), y: r.mgdl })),
-  }));
+  // Linha "Geral" (todas as leituras), os três momentos por cima e a tendência linear tracejada.
+  const geralPoints = rs.map((r) => ({ x: toMs(r.time), y: r.mgdl }));
+  const trend = linearTrend(geralPoints);
+  const txs = geralPoints.map((p) => p.x);
+  const series: Series[] = [
+    { name: 'Geral', color: '#111', line: true, points: geralPoints },
+    ...(['jejum', 'almoco', 'janta'] as const).map((c) => ({
+      name: CATEGORY_LABEL[c],
+      color: COLOR[c],
+      points: rs.filter((r) => classify(r.time, settings) === c).map((r) => ({ x: toMs(r.time), y: r.mgdl })),
+    })),
+    ...(trend
+      ? [{
+          name: 'Tendência',
+          color: '#111',
+          line: true,
+          dashed: true,
+          noDots: true,
+          points: [Math.min(...txs), Math.max(...txs)].map((x) => ({ x, y: Math.round((trend.intercept + trend.slope * x) * 10) / 10 })),
+        }]
+      : []),
+  ];
 
   useEffect(() => {
     document.title = 'Relatório de glicemia';

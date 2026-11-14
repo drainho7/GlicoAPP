@@ -6,6 +6,10 @@ export interface Series {
   /** x: valor numérico (ms ou índice); y: mg/dL */
   points: { x: number; y: number }[];
   line?: boolean;
+  /** Linha tracejada (ex.: tendência). */
+  dashed?: boolean;
+  /** Não desenha os pontos, só a linha. */
+  noDots?: boolean;
 }
 
 interface Props {
@@ -48,9 +52,17 @@ export function Chart({ series, xLabel, band, height = 260 }: Props) {
       {series.map((s) => (
         <g key={s.name}>
           {s.line && s.points.length > 1 && (
-            <polyline fill="none" stroke={s.color} strokeWidth="2" points={s.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')} />
+            <polyline
+              fill="none"
+              stroke={s.color}
+              strokeWidth={s.dashed ? 2 : 1.6}
+              strokeDasharray={s.dashed ? '7 5' : undefined}
+              strokeOpacity={s.dashed ? 0.9 : 0.55}
+              strokeLinejoin="round"
+              points={s.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')}
+            />
           )}
-          {s.points.map((p, i) => (
+          {!s.noDots && s.points.map((p, i) => (
             <circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={s.line ? 3 : 3.5} fill={s.color} opacity={s.line ? 1 : 0.8}>
               <title>{`${s.name}: ${p.y} mg/dL — ${xLabel(p.x)}`}</title>
             </circle>

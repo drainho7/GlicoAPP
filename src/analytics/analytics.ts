@@ -173,6 +173,23 @@ export function compareRanges(
   return { a: sa, b: sb, meanDelta: delta };
 }
 
+/** Reta de tendência por mínimos quadrados. null com menos de 3 pontos ou com x todo igual. */
+export function linearTrend(points: { x: number; y: number }[]): { slope: number; intercept: number } | null {
+  const n = points.length;
+  if (n < 3) return null;
+  const mx = points.reduce((a, p) => a + p.x, 0) / n;
+  const my = points.reduce((a, p) => a + p.y, 0) / n;
+  let sxx = 0;
+  let sxy = 0;
+  for (const p of points) {
+    sxx += (p.x - mx) ** 2;
+    sxy += (p.x - mx) * (p.y - my);
+  }
+  if (sxx === 0) return null;
+  const slope = sxy / sxx;
+  return { slope, intercept: my - slope * mx };
+}
+
 /* ---------------- Status e período anterior ---------------- */
 
 export type Status = 'low' | 'ok' | 'high';

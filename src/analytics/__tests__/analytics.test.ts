@@ -9,6 +9,7 @@ import {
   filterRange,
   groupByPeriod,
   inWindow,
+  linearTrend,
   normalizeTime,
   periodKey,
   previousRange,
@@ -130,6 +131,29 @@ describe('statusOf e previousRange', () => {
   it('período anterior tem a mesma duração', () => {
     expect(previousRange('2026-11-07', '2026-11-13')).toEqual({ from: '2026-10-31', to: '2026-11-06' });
     expect(previousRange('2026-03-01', '2026-03-01')).toEqual({ from: '2026-02-28', to: '2026-02-28' });
+  });
+});
+
+describe('linearTrend', () => {
+  it('reta exata y = 2x + 1', () => {
+    const t = linearTrend([{ x: 0, y: 1 }, { x: 1, y: 3 }, { x: 2, y: 5 }, { x: 3, y: 7 }])!;
+    expect(t.slope).toBeCloseTo(2, 10);
+    expect(t.intercept).toBeCloseTo(1, 10);
+  });
+  it('valores constantes dão inclinação zero', () => {
+    const t = linearTrend([{ x: 0, y: 130 }, { x: 5, y: 130 }, { x: 9, y: 130 }])!;
+    expect(t.slope).toBeCloseTo(0, 10);
+    expect(t.intercept).toBeCloseTo(130, 10);
+  });
+  it('funciona com x em milissegundos (números grandes)', () => {
+    const t0 = Date.UTC(2026, 10, 1);
+    const day = 86_400_000;
+    const t = linearTrend([0, 1, 2, 3].map((i) => ({ x: t0 + i * day, y: 100 + 10 * i })))!;
+    expect(t.slope * day).toBeCloseTo(10, 6);
+  });
+  it('menos de 3 pontos ou x repetido não tem tendência', () => {
+    expect(linearTrend([{ x: 0, y: 1 }, { x: 1, y: 2 }])).toBeNull();
+    expect(linearTrend([{ x: 1, y: 1 }, { x: 1, y: 2 }, { x: 1, y: 3 }])).toBeNull();
   });
 });
 
