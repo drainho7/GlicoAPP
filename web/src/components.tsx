@@ -234,10 +234,13 @@ export function ChartSection({
   readings,
   settings,
   category,
+  onCategory,
 }: {
   readings: StoredReading[];
   settings: Settings;
   category: Category | 'todas';
+  /** Se informado, mostra os botões para ver só jejum, só almoço ou só janta dentro do cartão do gráfico. */
+  onCategory?: (c: Category | 'todas') => void;
 }) {
   const [view, setView] = useState<View>('leituras');
   const shown: Category[] = category === 'todas' ? ['jejum', 'almoco', 'janta'] : [];
@@ -299,6 +302,7 @@ export function ChartSection({
           ))}
         </div>
       </div>
+      {onCategory && <CategoryChips selected={category} onSelect={onCategory} />}
       <div className="legend">
         {series.map((s) => (
           <span key={s.name}><span className="dot" style={{ background: s.color }} /> {s.name}</span>

@@ -266,7 +266,7 @@ export default function App() {
               {screen === 'inicio' && (
                 <>
                   <CategoryCards current={current} previous={previous} settings={settings} selected={category} onSelect={setCategory} />
-                  <ChartSection readings={current} settings={settings} category={category} />
+                  <ChartSection readings={current} settings={settings} category={category} onCategory={setCategory} />
                   <A1cCard readings={all} settings={settings} />
                 </>
               )}
