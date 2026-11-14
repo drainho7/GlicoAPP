@@ -1,4 +1,4 @@
-import { bmiClass, fieldFor, mergeBody, metricDelta, parseBodyRows, parseCellTime } from '../body';
+import { bmiClass, fieldFor, mergeBody, metricDelta, parseBodyRows, parseCellTime, parseClock, parseMeta } from '../body';
 
 // Todos os valores abaixo são fictícios (apenas para testar o leitor da planilha).
 const HEADER = [
@@ -71,6 +71,50 @@ describe('parseBodyRows', () => {
   });
   it('falha com mensagem clara se não achar data e peso', () => {
     expect(() => parseBodyRows([['A', 'B'], [1, 2]])).toThrow(/data e de peso/);
+  });
+});
+
+describe('planilha exportada pelo app (Data e Tempo em colunas separadas)', () => {
+  // Mesmo formato do arquivo real do app, com valores fictícios.
+  const none = null;
+  const rows: unknown[][] = [
+    ['Fulano - Dados de Medição', ...Array(15).fill(none)],
+    ['Sexo：Masculino', none, none, none, none, 'Idade：40Anos', none, none, none, none, 'Altura：172cm', ...Array(5).fill(none)],
+    ['01/03/2026 - 20/03/2026   (20dia,  Peso -0.70  BMI -0.20  Gordura -0.30) (172cm | 40Anos)', ...Array(15).fill(none)],
+    ['Data', 'Tempo', 'Peso(Kg)', 'IMC', 'Gordura(%)', 'Peso da gordura(Kg)', 'Percentual da massa muscular esquelética(%)',
+      'Peso da massa muscular esquelética(Kg)', 'Registro de massa muscular(%)', 'Peso da massa muscular(Kg)', 'Água(%)',
+      'peso da água(Kg)', 'Gordura visceral', 'Metabolismo(kcal / dia)', none, none],
+    ['20/03/2026', '07:15', '75.40', '25.3', '21.5', '16.2', '38.4', '28.9', '70.1', '52.8', '55.0', '41.5', '8.0', '1600.0', none, none],
+    ['05/03/2026', '13:52', '76.10', '25.7', '22.0', '16.7', '38.1', '29.0', '69.8', '53.1', '54.6', '41.5', '9.0', '1610.0', none, none],
+  ];
+
+  it('as colunas "Data" e "Tempo" são entendidas como data e hora', () => {
+    expect(fieldFor('Data')).toBe('date');
+    expect(fieldFor('Tempo')).toBe('time');
+    expect(fieldFor('Data/Hora')).toBe('time');
+  });
+  it('junta a data com a hora e lê os números gravados como texto', () => {
+    const r = parseBodyRows(rows);
+    expect(r.skipped).toBe(0);
+    expect(r.readings.map((x) => x.time)).toEqual(['2026-03-05T13:52:00', '2026-03-20T07:15:00']);
+    expect(r.readings[1]).toMatchObject({ weightKg: 75.4, bmi: 25.3, fatPct: 21.5, fatKg: 16.2, waterPct: 55, visceralFat: 8, bmrKcal: 1600 });
+  });
+  it('lê sexo, idade e altura do cabeçalho (dois-pontos de largura total) e aplica às pesagens', () => {
+    const r = parseBodyRows(rows);
+    expect(r.meta).toEqual({ sex: 'M', age: 40, heightCm: 172 });
+    expect(r.readings.every((x) => x.heightCm === 172 && x.age === 40)).toBe(true);
+  });
+  it('parseMeta aceita feminino e ignora o nome', () => {
+    expect(parseMeta([['Maria - Dados de Medição'], ['Sexo：Feminino', 'Idade：33Anos', 'Altura：160cm']])).toEqual({ sex: 'F', age: 33, heightCm: 160 });
+    expect(parseMeta([['nada aqui']])).toEqual({});
+  });
+  it('parseClock: texto, fração do dia e Date só com hora', () => {
+    expect(parseClock('01:57')).toBe('01:57:00');
+    expect(parseClock('7:05:09')).toBe('07:05:09');
+    expect(parseClock('25:00')).toBeNull();
+    expect(parseClock(0.5)).toBe('12:00:00');
+    expect(parseClock(new Date(Date.UTC(1899, 11, 30, 13, 52)))).toBe('13:52:00');
+    expect(parseClock('texto')).toBeNull();
   });
 });
 

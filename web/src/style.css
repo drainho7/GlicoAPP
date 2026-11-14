@@ -11,6 +11,8 @@
   --glass-shadow: 0 10px 34px rgba(40, 50, 110, .14), inset 0 1px 0 rgba(255, 255, 255, .9);
   --brand: #111; --on-brand: #fff; --ok: #1565c0; --high: #e65100; --low: #c62828;
   --input: rgba(255, 255, 255, .6);
+  --opt-bg: #ffffff; --opt-fg: #101015; --opt-hover: #dbe9ff;
+  color-scheme: light; /* controles nativos (menu aberto, calendário) acompanham o tema */
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -25,6 +27,8 @@
     --glass-shadow: 0 10px 34px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .20);
     --brand: #fff; --on-brand: #111; --ok: #4fc3f7; --high: #ffa040; --low: #ef5350;
     --input: rgba(255, 255, 255, .08);
+    --opt-bg: #23232a; --opt-fg: #f5f5f7; --opt-hover: #3a4a66;
+    color-scheme: dark;
   }
 }
 * { box-sizing: border-box; }
@@ -142,6 +146,9 @@ th { color: var(--muted); font-weight: 600; }
 .setrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--grid); }
 input { padding: 8px 10px; border-radius: 10px; color: var(--fg); font: inherit; background: var(--input); }
 input[type=number] { width: 80px; }
+/* Menu aberto do select: fundo sólido e texto com contraste (o fundo translúcido do vidro não vale no menu). */
+select option, select optgroup { background: var(--opt-bg); color: var(--opt-fg); }
+select option:checked, select option:hover { background: var(--opt-hover); color: var(--opt-fg); }
 select { padding: 8px 10px; border-radius: 10px; color: var(--fg); font: inherit; background: var(--input); border: 1px solid var(--glass-border); }
 .filebtn { display: inline-block; background: var(--brand); color: var(--on-brand); padding: 10px 14px; border-radius: 12px; font-weight: 600; cursor: pointer; margin-right: 8px; }
 .empty { text-align: center; padding: 36px 20px; }

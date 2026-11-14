@@ -199,9 +199,22 @@ export default function App() {
       if (!parsed.readings.length) throw new Error('a planilha não tem pesagens válidas.');
       const m = addBody(parsed.readings);
       setBody(m.all);
+      // O app da balança escreve sexo e altura acima da tabela: completa o perfil, mas só o que ainda está vazio.
+      const cur = loadSettings();
+      const p = cur.profile ?? {};
+      const fill: { sex?: 'M' | 'F'; heightCm?: number } = {};
+      if (!p.sex && parsed.meta.sex) fill.sex = parsed.meta.sex;
+      if (!p.heightCm && parsed.meta.heightCm) fill.heightCm = parsed.meta.heightCm;
+      const filled = Object.keys(fill).length > 0;
+      if (filled) {
+        const next = { ...cur, profile: { ...p, ...fill } };
+        saveSettings(next);
+        setSettings(next);
+      }
       setToast(
         `${prefix}planilha lida: ${parsed.readings.length} pesagens, ${m.added} nova${m.added === 1 ? '' : 's'}` +
-          (parsed.skipped ? ` (${parsed.skipped} linhas ignoradas).` : '.'),
+          (parsed.skipped ? ` (${parsed.skipped} linhas ignoradas).` : '.') +
+          (filled ? ' Perfil completado com o sexo e a altura do arquivo (confira em Ajustes).' : ''),
       );
       return true;
     } catch (e) {

@@ -71,13 +71,17 @@ const norm = (s: unknown) =>
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9%]/g, '');
 
-type Field = BodyMetricKey | 'time';
+/** 'date' = coluna só com a data; 'time' = hora (ou data e hora juntas, como no histórico do app). */
+type Field = BodyMetricKey | 'time' | 'date';
 
 /** Reconhece a coluna pelo nome (português do app OKOK e alguns nomes em inglês). */
 export function fieldFor(header: unknown): Field | null {
   const h = norm(header);
   if (!h) return null;
-  if (/^(tempo|data|hora|datahora|date|time|datetime|datadamedicao|datadapesagem)/.test(h)) return 'time';
+  // Data e hora juntas, ou só a hora ("Tempo" na planilha exportada tem só HH:MM).
+  if (/^(datahora|datetime|datadamedicao|datadapesagem|tempo|hora|time)/.test(h)) return 'time';
+  // Só a data ("Data" na planilha exportada).
+  if (/^(data|date)/.test(h)) return 'date';
   if (h.includes('visceral')) return 'visceralFat';
   if (h.includes('imc') || h.includes('bmi')) return 'bmi';
   if (h.includes('metabol') || h.includes('bmr') || h.includes('kcal')) return 'bmrKcal';
@@ -120,6 +124,24 @@ export function parseCellTime(v: unknown): string | null {
   return null;
 }
 
+/** Hora do dia "HH:MM[:SS]" (texto, Date do Excel só com hora, ou fração do dia). null se não for uma hora. */
+export function parseClock(v: unknown): string | null {
+  const fmt = (sec: number) => {
+    const s = ((Math.round(sec) % 86400) + 86400) % 86400;
+    return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+  };
+  if (typeof v === 'string') {
+    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(v.trim());
+    if (!m || +m[1] > 23 || +m[2] > 59 || +(m[3] ?? 0) > 59) return null;
+    return `${pad(+m[1])}:${m[2]}:${pad(+(m[3] ?? 0))}`;
+  }
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return fmt(v.getUTCHours() * 3600 + v.getUTCMinutes() * 60 + v.getUTCSeconds() + v.getUTCMilliseconds() / 1000);
+  }
+  if (typeof v === 'number' && v >= 0 && v < 1) return fmt(v * 86400);
+  return null;
+}
+
 const toNumber = (v: unknown): number | undefined => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
   if (typeof v !== 'string') return undefined;
@@ -129,12 +151,38 @@ const toNumber = (v: unknown): number | undefined => {
   return Number.isFinite(n) ? n : undefined;
 };
 
+/** Dados do cabeçalho da planilha ("Sexo：Masculino", "Idade：46Anos", "Altura：166cm"). Não guarda o nome. */
+export interface BodyMeta {
+  sex?: 'M' | 'F';
+  age?: number;
+  heightCm?: number;
+}
+
 export interface ParsedBody {
   readings: BodyReading[];
   /** Linhas ignoradas (sem data ou sem peso). */
   skipped: number;
   /** Colunas reconhecidas, para conferência na tela. */
   columns: string[];
+  /** Sexo, idade e altura que o app da balança escreve acima da tabela, se houver. */
+  meta: BodyMeta;
+}
+
+/** Procura sexo, idade e altura nas linhas acima da tabela (o app usa dois-pontos de largura total "："). */
+export function parseMeta(rows: unknown[][]): BodyMeta {
+  const meta: BodyMeta = {};
+  for (const row of rows) {
+    for (const cell of row ?? []) {
+      if (typeof cell !== 'string') continue;
+      const sex = /sexo\s*[:：]\s*(masculino|feminino)/i.exec(cell);
+      if (sex) meta.sex = sex[1].toLowerCase() === 'masculino' ? 'M' : 'F';
+      const age = /idade(?:\s+real)?\s*[:：]\s*(\d{1,3})/i.exec(cell);
+      if (age && +age[1] >= 1 && +age[1] <= 120) meta.age = +age[1];
+      const h = /altura\s*[:：]\s*(\d{2,3})\s*cm/i.exec(cell);
+      if (h && +h[1] >= 100 && +h[1] <= 250) meta.heightCm = +h[1];
+    }
+  }
+  return meta;
 }
 
 export function parseBodyRows(rows: unknown[][], source = 'okok'): ParsedBody {
@@ -142,7 +190,7 @@ export function parseBodyRows(rows: unknown[][], source = 'okok'): ParsedBody {
   let map: (Field | null)[] = [];
   for (let i = 0; i < Math.min(rows.length, 12); i++) {
     const m = (rows[i] ?? []).map(fieldFor);
-    if (m.includes('time') && m.includes('weightKg')) {
+    if ((m.includes('time') || m.includes('date')) && m.includes('weightKg')) {
       headerIdx = i;
       map = m;
       break;
@@ -150,30 +198,44 @@ export function parseBodyRows(rows: unknown[][], source = 'okok'): ParsedBody {
   }
   if (headerIdx < 0) throw new Error('Não encontrei as colunas de data e de peso. Confira se é o arquivo exportado pelo app da balança.');
 
+  const meta = parseMeta(rows.slice(0, headerIdx));
   const out = new Map<string, BodyReading>();
   let skipped = 0;
   for (const row of rows.slice(headerIdx + 1)) {
     if (!row || row.every((c) => c === null || c === undefined || c === '')) continue;
     const rec: Partial<Record<BodyMetricKey, number>> = {};
-    let time: string | null = null;
+    let dateCell: unknown;
+    let timeCell: unknown;
     map.forEach((f, i) => {
       if (!f) return;
-      if (f === 'time') time = parseCellTime(row[i]);
+      if (f === 'time') timeCell = row[i];
+      else if (f === 'date') dateCell = row[i];
       else {
         const n = toNumber(row[i]);
         if (n !== undefined) rec[f] = n;
       }
     });
+    // A hora pode vir com a data junta (histórico do app) ou em coluna própria, ao lado da coluna "Data" (planilha exportada).
+    let time: string | null = parseCellTime(timeCell);
+    if (!time) {
+      const day = parseCellTime(dateCell);
+      const clock = parseClock(timeCell);
+      if (day) time = clock ? `${day.slice(0, 10)}T${clock}` : day;
+    }
     if (!time || rec.weightKg === undefined || rec.weightKg <= 0) {
       skipped++;
       continue;
     }
-    const key = `${source}|${(time as string).slice(0, 16)}`;
+    const key = `${source}|${time.slice(0, 16)}`;
+    // O sexo, a idade e a altura vêm uma vez só, no cabeçalho: valem para todas as linhas que não trouxerem a coluna.
+    const base: Partial<BodyReading> = {};
+    if (meta.heightCm !== undefined) base.heightCm = meta.heightCm;
+    if (meta.age !== undefined) base.age = meta.age;
     // Linhas repetidas para o mesmo minuto são combinadas: campos novos completam os antigos, sem apagá-los.
-    out.set(key, { ...out.get(key), ...rec, weightKg: rec.weightKg, key, time: time as string });
+    out.set(key, { ...base, ...out.get(key), ...rec, weightKg: rec.weightKg, key, time });
   }
   const readings = [...out.values()].sort((a, b) => (a.time < b.time ? -1 : 1));
-  return { readings, skipped, columns: [...new Set(map.filter((f): f is Field => !!f))] };
+  return { readings, skipped, columns: [...new Set(map.filter((f): f is Field => !!f))], meta };
 }
 
 /* ---------------- Comparações ---------------- */
