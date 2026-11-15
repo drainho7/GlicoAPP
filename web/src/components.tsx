@@ -103,6 +103,7 @@ export function PeriodPicker({
   setTo,
   onPdf,
   summary,
+  hint,
 }: {
   preset: Preset;
   setPreset: (p: Preset) => void;
@@ -112,6 +113,8 @@ export function PeriodPicker({
   setTo: (s: string) => void;
   onPdf: () => void;
   summary: string;
+  /** Aviso opcional abaixo do resumo (ex.: "Nenhuma medição hoje ainda"). */
+  hint?: string;
 }) {
   return (
     <div className="picker">
@@ -130,6 +133,7 @@ export function PeriodPicker({
         </div>
       )}
       <p className="muted period-note">Exibindo {summary}. Vale para os cartões, o gráfico e o histórico.</p>
+      {hint && <p className="period-note"><b>{hint}</b></p>}
     </div>
   );
 }
@@ -186,37 +190,60 @@ export function ReportDialog({
 
 /* ---------------- Cartões por refeição ---------------- */
 
+/** Linha pequena dentro do cartão: valor, hora e o seletor compacto para mover a medição de momento. */
+function MiniRow({ r, settings, onCategory }: { r: StoredReading; settings: Settings; onCategory: (key: string, c: Category | undefined) => void }) {
+  const st = statusOf(r.mgdl, catOf(r, settings), settings);
+  return (
+    <div className="mini-row">
+      <span className={`mini-val s-${st}`}>{r.mgdl}</span>
+      <span className="mini-time">{r.time.slice(11, 16)}</span>
+      <CategorySelect r={r} onChange={onCategory} compact />
+      {r.conflict && !r.manual && (
+        <span className="badge" title="Mais de uma medição caiu neste momento do dia. O app sugeriu uma; escolha qual vale.">escolha</span>
+      )}
+    </div>
+  );
+}
+
 export function CategoryCards({
   current,
   previous,
   settings,
   selected,
   onSelect,
+  list,
+  onCategory,
 }: {
   current: StoredReading[];
   previous: StoredReading[] | null;
   settings: Settings;
   selected: Category | 'todas';
   onSelect: (c: Category | 'todas') => void;
+  /** Se informado (período "Hoje"), lista cada medição dentro do cartão do seu momento, com seletor para trocar. */
+  list?: StoredReading[];
+  onCategory?: (key: string, c: Category | undefined) => void;
 }) {
   const cur = useMemo(() => summarizeByCategory(current, settings), [current, settings]);
   const prev = useMemo(() => (previous ? summarizeByCategory(previous, settings) : null), [previous, settings]);
   const cats = ['jejum', 'almoco', 'janta'] as const;
+  const byTime = (a: StoredReading, b: StoredReading) => (a.time < b.time ? -1 : 1);
+  const extras = list && onCategory ? list.filter((r) => catOf(r, settings) === 'outra').sort(byTime) : [];
   return (
+    <>
     <div className="cards3">
       {cats.map((c) => {
         const s = cur.byCategory[c];
         const pm = prev?.byCategory[c].mean ?? null;
         const delta = s.mean !== null && pm !== null ? Math.round(s.mean - pm) : null;
         const [lo, hi] = settings.targets[c];
+        const items = list && onCategory ? list.filter((r) => catOf(r, settings) === c).sort(byTime) : [];
         return (
-          <button
+          <div
             key={c}
             className={`card cat ${selected === c ? 'sel' : ''}`}
             style={{ ['--accent' as string]: COLOR[c] }}
-            onClick={() => onSelect(selected === c ? 'todas' : c)}
-            aria-pressed={selected === c}
           >
+          <button className="cat-main" onClick={() => onSelect(selected === c ? 'todas' : c)} aria-pressed={selected === c}>
             <div className="cat-title"><span className="dot" /> {CATEGORY_LABEL[c]}</div>
             <div className="avg">{fmt(s.mean)}<small> mg/dL</small></div>
             <div className="muted">média · {s.count} leitura{s.count === 1 ? '' : 's'}</div>
@@ -232,9 +259,26 @@ export function CategoryCards({
               </div>
             )}
           </button>
+          {items.length > 0 && (
+            <div className="mini">
+              {items.map((r) => (
+                <MiniRow key={r.key} r={r} settings={settings} onCategory={onCategory!} />
+              ))}
+            </div>
+          )}
+          </div>
         );
       })}
     </div>
+    {extras.length > 0 && (
+      <div className="extras">
+        <span className="muted">Extras de hoje:</span>
+        {extras.map((r) => (
+          <MiniRow key={r.key} r={r} settings={settings} onCategory={onCategory!} />
+        ))}
+      </div>
+    )}
+    </>
   );
 }
 
@@ -426,16 +470,25 @@ export function CategoryChips({ selected, onSelect }: { selected: Category | 'to
 }
 
 /** Escolha do momento de uma medição: mostra o que o app sugeriu e todas as opções; a sua escolha vale mais. */
-export function CategorySelect({ r, onChange }: { r: StoredReading; onChange: (key: string, c: Category | undefined) => void }) {
+export function CategorySelect({
+  r,
+  onChange,
+  compact = false,
+}: {
+  r: StoredReading;
+  onChange: (key: string, c: Category | undefined) => void;
+  /** Versão pequena, para dentro dos cartões. */
+  compact?: boolean;
+}) {
   return (
     <select
-      className="catsel"
+      className={compact ? 'catsel compact' : 'catsel'}
       value={r.manual ?? ''}
       aria-label="Momento da medição"
       title="O app sugere o momento pelo horário. Escolha outro se estiver errado."
       onChange={(e) => onChange(r.key, (e.target.value || undefined) as Category | undefined)}
     >
-      <option value="">Automático · {r.suggested && r.suggested !== 'outra' ? CATEGORY_LABEL[r.suggested] : 'Extra'}</option>
+      <option value="">{compact ? 'Auto' : 'Automático'} · {r.suggested && r.suggested !== 'outra' ? CATEGORY_LABEL[r.suggested] : 'Extra'}</option>
       <option value="jejum">Jejum</option>
       <option value="almoco">Almoço</option>
       <option value="janta">Jantar</option>
@@ -462,41 +515,6 @@ function ReadingRow({ r, settings, onCategory }: { r: StoredReading; settings: S
         <span className="badge" title="Mais de uma medição caiu neste momento do dia. O app sugeriu uma; escolha qual vale.">escolha</span>
       )}
     </div>
-  );
-}
-
-/** Medições de hoje, cada uma com o momento sugerido e as opções para trocar. */
-export function TodayCard({
-  readings,
-  settings,
-  today,
-  onCategory,
-}: {
-  readings: StoredReading[];
-  settings: Settings;
-  today: string;
-  onCategory: (key: string, c: Category | undefined) => void;
-}) {
-  const rows = readings.filter((r) => dayOf(r) === today).sort((a, b) => (a.time < b.time ? -1 : 1));
-  if (!rows.length) return null;
-  const disputa = rows.some((r) => r.conflict && !r.manual);
-  return (
-    <section className="card today">
-      <div className="section-head">
-        <h2>Medições de hoje</h2>
-        <span className="muted">{rows.length} {rows.length === 1 ? 'medição' : 'medições'}</span>
-      </div>
-      <div className="day">
-        {rows.map((r) => (
-          <ReadingRow key={r.key} r={r} settings={settings} onCategory={onCategory} />
-        ))}
-      </div>
-      <p className="muted">
-        {disputa
-          ? 'Mais de uma medição caiu no mesmo momento. O app sugeriu uma por momento, mas quem decide é você: troque em cada linha.'
-          : 'O app sugere o momento (jejum, almoço, jantar) pelo horário. Se estiver errado, troque na lista.'}
-      </p>
-    </section>
   );
 }
 

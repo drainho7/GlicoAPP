@@ -18,7 +18,6 @@ import {
   rangeFor,
   ReportDialog,
   SettingsPanel,
-  TodayCard,
 } from './components';
 import {
   addBody,
@@ -46,7 +45,13 @@ export default function App() {
   // Leituras com o momento (sugerido ou escolhido) e o dia da refeição já calculados.
   const all = useMemo(() => annotate(raw, settings), [raw, settings]);
   const [screen, setScreen] = useState<Screen>('inicio');
-  const [preset, setPreset] = useState<Preset>('30');
+  const [preset, setPreset] = useState<Preset>('today'); // ao abrir, mostra o dia de hoje
+  // Data de hoje, conferida a cada minuto: se o app ficar aberto na virada do dia, o "Hoje" acompanha.
+  const [today, setToday] = useState(localToday);
+  useEffect(() => {
+    const t = setInterval(() => setToday(localToday()), 60_000);
+    return () => clearInterval(t);
+  }, []);
   const [cFrom, setCFrom] = useState('');
   const [cTo, setCTo] = useState('');
   const [category, setCategory] = useState<Category | 'todas'>('todas');
@@ -142,7 +147,8 @@ export default function App() {
   const last = all[all.length - 1];
   const anchor = last ? last.time.slice(0, 10) : new Date().toISOString().slice(0, 10);
 
-  const range = useMemo(() => rangeFor(preset, anchor, cFrom, cTo), [preset, cFrom, cTo, anchor]);
+  // `today` entra nas dependências para o período "Hoje" ser recalculado na virada do dia.
+  const range = useMemo(() => rangeFor(preset, anchor, cFrom, cTo), [preset, cFrom, cTo, anchor, today]);
 
   const current = useMemo(() => filterRange(all, range.from, range.to), [all, range]);
   const brd = (d: string) => d.split('-').reverse().join('/');
@@ -262,7 +268,6 @@ export default function App() {
       {(screen === 'inicio' || screen === 'historico') && (
         <>
           {screen === 'inicio' && <Hero last={last} settings={settings} busy={ui.phase === 'working'} onImport={doImport} />}
-          {screen === 'inicio' && <TodayCard readings={all} settings={settings} today={localToday()} onCategory={changeCategory} />}
           {all.length === 0 ? (
             <section className="card empty">
               <h2>Vamos começar</h2>
@@ -271,10 +276,19 @@ export default function App() {
             </section>
           ) : (
             <>
-              <PeriodPicker preset={preset} setPreset={setPreset} from={cFrom} to={cTo} setFrom={setCFrom} setTo={setCTo} onPdf={() => setReportOpen(true)} summary={periodSummary} />
+              <PeriodPicker preset={preset} setPreset={setPreset} from={cFrom} to={cTo} setFrom={setCFrom} setTo={setCTo} onPdf={() => setReportOpen(true)} summary={periodSummary}
+                hint={preset === 'today' && current.length === 0 ? 'Nenhuma medição hoje ainda. Importe do medidor ou escolha "7 dias" para ver os dias anteriores.' : undefined} />
               {screen === 'inicio' && (
                 <>
-                  <CategoryCards current={current} previous={previous} settings={settings} selected={category} onSelect={setCategory} />
+                  <CategoryCards
+                    current={current}
+                    previous={previous}
+                    settings={settings}
+                    selected={category}
+                    onSelect={setCategory}
+                    list={preset === 'today' ? current : undefined}
+                    onCategory={changeCategory}
+                  />
                   <ChartSection readings={current} settings={settings} category={category} onCategory={setCategory} />
                   <A1cCard readings={all} settings={settings} />
                 </>
