@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { readSheet } from 'read-excel-file/browser';
-import { Category, filterRange, previousRange, Settings } from '../../src/analytics/analytics';
+import { annotate, Category, filterRange, previousRange, Settings } from '../../src/analytics/analytics';
 import { BodyReading, parseBodyRows } from '../../src/body/body';
 import { BodyScreen } from './body';
 import { importFromMeter } from './bluetooth';
@@ -18,6 +18,7 @@ import {
   rangeFor,
   ReportDialog,
   SettingsPanel,
+  TodayCard,
 } from './components';
 import {
   addBody,
@@ -30,16 +31,20 @@ import {
   mergeReadings,
   restoreFromBackup,
   saveSettings,
+  setReadingCategory,
   StoredReading,
 } from './store';
+import { localToday } from './format';
 
 type Screen = 'inicio' | 'historico' | 'corpo' | 'ajustes';
 
 export default function App() {
-  const [all, setAll] = useState<StoredReading[]>(loadReadings);
+  const [raw, setAll] = useState<StoredReading[]>(loadReadings);
   const [body, setBody] = useState<BodyReading[]>(loadBody);
   const [bodyBusy, setBodyBusy] = useState(false);
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  // Leituras com o momento (sugerido ou escolhido) e o dia da refeição já calculados.
+  const all = useMemo(() => annotate(raw, settings), [raw, settings]);
   const [screen, setScreen] = useState<Screen>('inicio');
   const [preset, setPreset] = useState<Preset>('30');
   const [cFrom, setCFrom] = useState('');
@@ -225,6 +230,9 @@ export default function App() {
     }
   };
 
+  // O usuário escolhe o momento de uma medição (ou volta ao automático, com undefined).
+  const changeCategory = (key: string, c: Category | undefined) => setAll(setReadingCategory(key, c));
+
   const updateSettings = (s: Settings) => {
     setSettings(s);
     saveSettings(s);
@@ -254,6 +262,7 @@ export default function App() {
       {(screen === 'inicio' || screen === 'historico') && (
         <>
           {screen === 'inicio' && <Hero last={last} settings={settings} busy={ui.phase === 'working'} onImport={doImport} />}
+          {screen === 'inicio' && <TodayCard readings={all} settings={settings} today={localToday()} onCategory={changeCategory} />}
           {all.length === 0 ? (
             <section className="card empty">
               <h2>Vamos começar</h2>
@@ -274,7 +283,7 @@ export default function App() {
                 <>
                   <CategoryChips selected={category} onSelect={setCategory} />
                   <ChartSection readings={current} settings={settings} category={category} />
-                  <History readings={current} settings={settings} category={category} />
+                  <History readings={current} settings={settings} category={category} onCategory={changeCategory} />
                 </>
               )}
             </>

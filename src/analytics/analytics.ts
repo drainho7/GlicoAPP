@@ -9,15 +9,26 @@ export interface Reading {
   time: string;
   mgdl: number;
   sequence?: number;
+  /** Escolha do usuário para este momento (guardada). Vale mais que a sugestão do app. */
+  manual?: Category;
+  /* Preenchidos por annotate(), não são guardados: */
+  /** Momento efetivo: a escolha do usuário ou, na falta dela, a sugestão. */
+  category?: Category;
+  /** O que o app sugeriu, olhando o horário e as outras medições do dia. */
+  suggested?: Category;
+  /** Dia da refeição: o jantar medido depois da meia-noite pertence ao dia anterior. */
+  day?: string;
+  /** Mais de uma medição disputava o mesmo momento do dia e o usuário ainda não escolheu. */
+  conflict?: boolean;
 }
 
 export type Category = 'jejum' | 'almoco' | 'janta' | 'outra';
 export const CATEGORIES: Category[] = ['jejum', 'almoco', 'janta', 'outra'];
 export const CATEGORY_LABEL: Record<Category, string> = {
   jejum: 'Jejum',
-  almoco: '2 h após almoço',
-  janta: '2 h após janta',
-  outra: 'Outras',
+  almoco: 'Almoço',
+  janta: 'Jantar',
+  outra: 'Extras',
 };
 
 /** Dados do próprio usuário, digitados por ele em Ajustes (ficam só neste computador). */
@@ -33,6 +44,11 @@ export interface UserProfile {
 /** Janelas em minutos desde 00:00, [início, fim). */
 export interface Settings {
   windows: Record<Exclude<Category, 'outra'>, [number, number]>;
+  /**
+   * Horário usual de cada medição (minutos desde 00:00). Só serve para desempatar a sugestão quando há
+   * mais de uma medição do dia no mesmo momento: vale a que está mais perto do horário usual.
+   */
+  usual?: Record<Exclude<Category, 'outra'>, number>;
   /** Faixa alvo [mín, máx] em mg/dL, configurável pelo usuário. */
   targets: Record<Exclude<Category, 'outra'>, [number, number]>;
   /** Meta de HbA1c (%). Padrão: abaixo de 7% para a maioria dos adultos com diabetes (SBD). */
@@ -44,11 +60,13 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  // Janelas só SUGEREM o momento (o usuário pode trocar medição por medição) e não deixam buracos entre si.
   windows: {
     jejum: [4 * 60, 10 * 60 + 30],
-    almoco: [13 * 60, 16 * 60],
-    janta: [19 * 60 + 30, 1 * 60], // 19:30 até 01:00 (passa da meia-noite)
+    almoco: [10 * 60 + 30, 17 * 60 + 30],
+    janta: [17 * 60 + 30, 1 * 60], // 17:30 até 01:00 (passa da meia-noite)
   },
+  usual: { jejum: 7 * 60, almoco: 15 * 60, janta: 22 * 60 },
   // Metas da Sociedade Brasileira de Diabetes (SBD) para adultos com diabetes (SBD/SBEM/SBC):
   // jejum e pré-prandial 80–130 mg/dL; 2 h após a refeição < 180; HbA1c < 7%. Abaixo de 70 é hipoglicemia.
   // São editáveis: as metas devem ser individualizadas com o médico.
@@ -73,12 +91,83 @@ export function classify(time: string, s: Settings = DEFAULT_SETTINGS): Category
   return 'outra';
 }
 
+/** Momento efetivo de uma leitura: o já calculado por annotate(), senão pela janela do horário. */
+export const catOf = (r: Reading, s: Settings = DEFAULT_SETTINGS): Category => r.category ?? r.manual ?? classify(r.time, s);
+
+/** Dia da refeição de uma leitura (annotate() preenche; sem isso vale a data do horário). */
+export const dayOf = (r: Reading): string => r.day ?? r.time.slice(0, 10);
+
+type Slot = Exclude<Category, 'outra'>;
+
+/** Horário usual do momento (configurável; o padrão está em DEFAULT_SETTINGS.usual). */
+const usualOf = (s: Settings, slot: Exclude<Category, 'outra'>) => s.usual?.[slot] ?? DEFAULT_SETTINGS.usual![slot];
+const circDist = (a: number, b: number) => {
+  const d = Math.abs(a - b) % 1440;
+  return Math.min(d, 1440 - d);
+};
+
+export type Annotated<T extends Reading> = T & { category: Category; suggested: Category; day: string; conflict: boolean };
+
+/**
+ * Sugere o momento de cada leitura e calcula o dia da refeição. Regras:
+ *  1. A janela do horário dá a sugestão inicial.
+ *  2. Se mais de uma leitura do mesmo dia cai no mesmo momento (ex.: 6 medições no dia), só a mais perto do
+ *     horário usual (s.usual) fica com o momento; as outras são sugeridas como "Extras", todas com conflict.
+ *  3. A escolha manual do usuário (r.manual) sempre vence; se ela ocupa um momento, as outras leituras
+ *     daquele momento e dia passam a ser sugeridas como Extras.
+ *  4. Jantar antes do início da janela do jejum (ex.: 00:22) pertence ao dia anterior.
+ */
+export function annotate<T extends Reading>(readings: T[], s: Settings = DEFAULT_SETTINGS): Annotated<T>[] {
+  const cutoff = s.windows.jejum[0];
+  const dayFor = (r: Reading, cat: Category) =>
+    cat === 'janta' && minutesOfDay(r.time) < cutoff ? addDaysIso(r.time.slice(0, 10), -1) : r.time.slice(0, 10);
+
+  const win = readings.map((r) => classify(r.time, s));
+  const groups = new Map<string, number[]>();
+  const taken = new Set<string>(); // "dia|momento" já escolhido à mão
+  readings.forEach((r, i) => {
+    if (r.manual) {
+      taken.add(`${dayFor(r, r.manual)}|${r.manual}`);
+      return;
+    }
+    if (win[i] === 'outra') return;
+    const k = `${dayFor(r, win[i])}|${win[i]}`;
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(i);
+  });
+
+  const suggested: Category[] = [...win];
+  const conflict = readings.map(() => false);
+  for (const [k, idxs] of groups) {
+    const slot = k.split('|')[1] as Slot;
+    if (taken.has(k)) {
+      idxs.forEach((i) => (suggested[i] = 'outra'));
+      continue;
+    }
+    if (idxs.length > 1) {
+      const mid = usualOf(s, slot);
+      let best = idxs[0];
+      for (const i of idxs) {
+        if (circDist(minutesOfDay(readings[i].time), mid) < circDist(minutesOfDay(readings[best].time), mid)) best = i;
+      }
+      idxs.forEach((i) => {
+        suggested[i] = i === best ? slot : 'outra';
+        conflict[i] = true;
+      });
+    }
+  }
+
+  return readings.map((r, i) => {
+    const category = r.manual ?? suggested[i];
+    return { ...r, suggested: suggested[i], category, day: dayFor(r, category), conflict: conflict[i] };
+  });
+}
+
 export interface Summary {
   count: number;
   mean: number | null;
   min: number | null;
   max: number | null;
-  /** % de leituras dentro da faixa alvo (null se não há alvo, como em "Outras"). */
+  /** % de leituras dentro da faixa alvo (null se não há alvo, como em "Extras"). */
   inRangePct: number | null;
 }
 
@@ -102,7 +191,7 @@ export interface CategorySummaries {
 
 export function summarizeByCategory(readings: Reading[], s: Settings = DEFAULT_SETTINGS): CategorySummaries {
   const buckets: Record<Category, number[]> = { jejum: [], almoco: [], janta: [], outra: [] };
-  for (const r of readings) buckets[classify(r.time, s)].push(r.mgdl);
+  for (const r of readings) buckets[catOf(r, s)].push(r.mgdl);
   return {
     all: summarize(readings.map((r) => r.mgdl)),
     byCategory: {
@@ -145,7 +234,7 @@ export interface PeriodGroup extends CategorySummaries {
 export function groupByPeriod(readings: Reading[], p: Period, s: Settings = DEFAULT_SETTINGS): PeriodGroup[] {
   const map = new Map<string, Reading[]>();
   for (const r of readings) {
-    const k = periodKey(r.time, p);
+    const k = periodKey(dayOf(r), p); // dia da refeição: o jantar após a meia-noite fica no dia anterior
     (map.get(k) ?? map.set(k, []).get(k)!).push(r);
   }
   return [...map.entries()]
@@ -156,7 +245,7 @@ export function groupByPeriod(readings: Reading[], p: Period, s: Settings = DEFA
 /** Filtro por faixa de datas inclusiva ("YYYY-MM-DD"). */
 export function filterRange<T extends Reading>(readings: T[], from?: string, to?: string): T[] {
   return readings.filter((r) => {
-    const d = dateOf(r.time);
+    const d = dayOf(r);
     return (!from || d >= from) && (!to || d <= to);
   });
 }

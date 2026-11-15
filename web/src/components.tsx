@@ -4,7 +4,8 @@ import {
   CATEGORIES,
   CATEGORY_LABEL,
   Category,
-  classify,
+  catOf,
+  dayOf,
   DEFAULT_SETTINGS,
   estimateA1c,
   filterRange,
@@ -41,7 +42,7 @@ export function Hero({
   busy: boolean;
   onImport: () => void;
 }) {
-  const c = last ? classify(last.time, settings) : null;
+  const c = last ? catOf(last, settings) : null;
   const st = last && c ? statusOf(last.mgdl, c, settings) : null;
   return (
     <section className="hero card">
@@ -71,11 +72,23 @@ export function Hero({
 
 /* ---------------- Período ---------------- */
 
-export type Preset = '7' | '30' | '90' | '365' | 'all' | 'custom';
-const PRESETS: [Preset, string][] = [['7', '7 dias'], ['30', '30 dias'], ['90', '90 dias'], ['365', '1 ano'], ['all', 'Tudo'], ['custom', 'Datas…']];
+export type Preset = 'today' | '7' | '30' | '90' | '365' | 'all' | 'custom';
+const PRESETS: [Preset, string][] = [
+  ['today', 'Hoje'],
+  ['7', '7 dias'],
+  ['30', '30 dias'],
+  ['90', '90 dias'],
+  ['365', '1 ano'],
+  ['all', 'Tudo'],
+  ['custom', 'Datas…'],
+];
 
-/** Converte a escolha de período em datas. "N dias" contam para trás a partir da última leitura. */
+/**
+ * Converte a escolha de período em datas. "Hoje" é o dia de hoje de verdade; "N dias" contam para trás a partir
+ * da última leitura. As datas são "dias da refeição": o jantar medido depois da meia-noite fica no dia anterior.
+ */
 export function rangeFor(preset: Preset, anchor: string, cFrom: string, cTo: string): { from?: string; to?: string } {
+  if (preset === 'today') return { from: localToday(), to: localToday() };
   if (preset === 'all') return {};
   if (preset === 'custom') return { from: cFrom || undefined, to: cTo || undefined };
   return { from: addDays(anchor, -(Number(preset) - 1)), to: anchor };
@@ -253,11 +266,11 @@ export function ChartSection({
   const pointsFor = (c: Category | 'todas', withStatus = false): Pt[] =>
     view === 'leituras'
       ? readings
-          .filter((r) => c === 'todas' || classify(r.time, settings) === c)
+          .filter((r) => c === 'todas' || catOf(r, settings) === c)
           .map((r) => ({
             x: toMs(r.time),
             y: r.mgdl,
-            status: withStatus ? statusOf(r.mgdl, classify(r.time, settings), settings) : undefined,
+            status: withStatus ? statusOf(r.mgdl, catOf(r, settings), settings) : undefined,
           }))
       : groups.flatMap((g, i): Pt[] => {
           const y = c === 'todas' ? g.all.mean : g.byCategory[c].mean;
@@ -321,7 +334,7 @@ export function ChartSection({
         <div className="scroll">
           <table>
             <thead>
-              <tr><th>{VIEWS.find(([k]) => k === view)![1]}</th><th>Leituras</th><th>Jejum</th><th>Almoço</th><th>Janta</th></tr>
+              <tr><th>{VIEWS.find(([k]) => k === view)![1]}</th><th>Leituras</th><th>Jejum</th><th>Almoço</th><th>Jantar</th></tr>
             </thead>
             <tbody>
               {[...groups].reverse().map((g) => (
@@ -398,8 +411,8 @@ export function A1cCard({ readings, settings }: { readings: StoredReading[]; set
 const CAT_CHIPS: [Category | 'todas', string][] = [
   ['todas', 'Todas'],
   ['jejum', 'Jejum'],
-  ['almoco', '2 h após almoço'],
-  ['janta', '2 h após janta'],
+  ['almoco', 'Almoço'],
+  ['janta', 'Jantar'],
 ];
 
 export function CategoryChips({ selected, onSelect }: { selected: Category | 'todas'; onSelect: (c: Category | 'todas') => void }) {
@@ -412,41 +425,111 @@ export function CategoryChips({ selected, onSelect }: { selected: Category | 'to
   );
 }
 
+/** Escolha do momento de uma medição: mostra o que o app sugeriu e todas as opções; a sua escolha vale mais. */
+export function CategorySelect({ r, onChange }: { r: StoredReading; onChange: (key: string, c: Category | undefined) => void }) {
+  return (
+    <select
+      className="catsel"
+      value={r.manual ?? ''}
+      aria-label="Momento da medição"
+      title="O app sugere o momento pelo horário. Escolha outro se estiver errado."
+      onChange={(e) => onChange(r.key, (e.target.value || undefined) as Category | undefined)}
+    >
+      <option value="">Automático · {r.suggested && r.suggested !== 'outra' ? CATEGORY_LABEL[r.suggested] : 'Extra'}</option>
+      <option value="jejum">Jejum</option>
+      <option value="almoco">Almoço</option>
+      <option value="janta">Jantar</option>
+      <option value="outra">Extra</option>
+    </select>
+  );
+}
+
+/** Uma linha de medição: valor, hora, momento escolhido/sugerido e aviso de disputa. */
+function ReadingRow({ r, settings, onCategory }: { r: StoredReading; settings: Settings; onCategory: (key: string, c: Category | undefined) => void }) {
+  const c = catOf(r, settings);
+  const st = statusOf(r.mgdl, c, settings);
+  const madrugada = dayOf(r) !== r.time.slice(0, 10);
+  return (
+    <div className="item" key={r.key}>
+      <span className={`pill s-${st}`}>{r.mgdl}</span>
+      <span>
+        {r.time.slice(11, 16)}
+        {madrugada && <span className="muted" title="Medida depois da meia-noite: conta no dia da refeição anterior"> · madrugada</span>}
+      </span>
+      <span className="dot" style={{ background: COLOR[c] }} />
+      <CategorySelect r={r} onChange={onCategory} />
+      {r.conflict && !r.manual && (
+        <span className="badge" title="Mais de uma medição caiu neste momento do dia. O app sugeriu uma; escolha qual vale.">escolha</span>
+      )}
+    </div>
+  );
+}
+
+/** Medições de hoje, cada uma com o momento sugerido e as opções para trocar. */
+export function TodayCard({
+  readings,
+  settings,
+  today,
+  onCategory,
+}: {
+  readings: StoredReading[];
+  settings: Settings;
+  today: string;
+  onCategory: (key: string, c: Category | undefined) => void;
+}) {
+  const rows = readings.filter((r) => dayOf(r) === today).sort((a, b) => (a.time < b.time ? -1 : 1));
+  if (!rows.length) return null;
+  const disputa = rows.some((r) => r.conflict && !r.manual);
+  return (
+    <section className="card today">
+      <div className="section-head">
+        <h2>Medições de hoje</h2>
+        <span className="muted">{rows.length} {rows.length === 1 ? 'medição' : 'medições'}</span>
+      </div>
+      <div className="day">
+        {rows.map((r) => (
+          <ReadingRow key={r.key} r={r} settings={settings} onCategory={onCategory} />
+        ))}
+      </div>
+      <p className="muted">
+        {disputa
+          ? 'Mais de uma medição caiu no mesmo momento. O app sugeriu uma por momento, mas quem decide é você: troque em cada linha.'
+          : 'O app sugere o momento (jejum, almoço, jantar) pelo horário. Se estiver errado, troque na lista.'}
+      </p>
+    </section>
+  );
+}
+
 export function History({
   readings,
   settings,
   category = 'todas',
+  onCategory,
 }: {
   readings: StoredReading[];
   settings: Settings;
   category?: Category | 'todas';
+  onCategory: (key: string, c: Category | undefined) => void;
 }) {
   const [limit, setLimit] = useState(60);
   const rows = useMemo(
-    () => [...readings].reverse().filter((r) => category === 'todas' || classify(r.time, settings) === category),
+    () => [...readings].reverse().filter((r) => category === 'todas' || catOf(r, settings) === category),
     [readings, category, settings],
   );
   const shown = rows.slice(0, limit);
+  // Agrupa pelo dia da refeição: o jantar medido depois da meia-noite fica no dia anterior.
   const byDay = new Map<string, StoredReading[]>();
-  for (const r of shown) (byDay.get(r.time.slice(0, 10)) ?? byDay.set(r.time.slice(0, 10), []).get(r.time.slice(0, 10))!).push(r);
+  for (const r of shown) (byDay.get(dayOf(r)) ?? byDay.set(dayOf(r), []).get(dayOf(r))!).push(r);
 
   if (!rows.length) return <p className="card muted">Nenhuma leitura neste período.</p>;
   return (
     <section>
-      {[...byDay.entries()].map(([day, rs]) => (
+      {[...byDay.entries()].sort(([a], [b]) => (a < b ? 1 : -1)).map(([day, rs]) => (
         <div className="card day" key={day}>
           <h3>{dayHeading(day)}</h3>
-          {rs.map((r) => {
-            const c = classify(r.time, settings);
-            const st = statusOf(r.mgdl, c, settings);
-            return (
-              <div className="item" key={r.key}>
-                <span className={`pill s-${st}`}>{r.mgdl}</span>
-                <span>{r.time.slice(11, 16)}</span>
-                <span className="muted"><span className="dot" style={{ background: COLOR[c] }} /> {CATEGORY_LABEL[c]}</span>
-              </div>
-            );
-          })}
+          {rs.map((r) => (
+            <ReadingRow key={r.key} r={r} settings={settings} onCategory={onCategory} />
+          ))}
         </div>
       ))}
       {rows.length > limit && (
@@ -617,8 +700,10 @@ export function SettingsPanel({
       <div className="card">
         <h2>Horários das medições</h2>
         <p className="muted">
-          Cada leitura é classificada pelo horário em que foi feita. Fora destas janelas, vira "Outras". Se o fim for menor que o
-          início (ex.: 19:30 até 01:00), a janela passa da meia-noite.
+          O app <b>sugere</b> o momento de cada medição (jejum, almoço, jantar) pelo horário; fora destas janelas ela vira "Extra".
+          Se mais de uma medição do dia cair no mesmo momento, vale a que estiver mais perto do <b>horário usual</b>. Você pode
+          trocar o momento de qualquer medição em <b>Hoje</b> ou no <b>Histórico</b>: a sua escolha sempre vale mais. Se o fim da
+          janela for menor que o início (ex.: 17:30 até 01:00), ela passa da meia-noite.
         </p>
         {cats.map((c) => (
           <div className="setrow" key={c}>
@@ -629,6 +714,9 @@ export function SettingsPanel({
               {' – '}
               <input type="time" value={hhmm(settings.windows[c][1])}
                 onChange={(e) => onChange({ ...settings, windows: { ...settings.windows, [c]: [settings.windows[c][0], toMin(e.target.value)] } })} />
+              <span className="muted"> · usual </span>
+              <input type="time" value={hhmm(settings.usual?.[c] ?? DEFAULT_SETTINGS.usual![c])} aria-label={`Horário usual: ${CATEGORY_LABEL[c]}`}
+                onChange={(e) => onChange({ ...settings, usual: { ...DEFAULT_SETTINGS.usual!, ...settings.usual, [c]: toMin(e.target.value) } })} />
             </div>
           </div>
         ))}

@@ -1,5 +1,7 @@
 import {
   a1cFromMean,
+  annotate,
+  CATEGORY_LABEL,
   calibrateWithExam,
   eagFromA1c,
   estimateA1c,
@@ -23,18 +25,21 @@ import {
 const r = (time: string, mgdl: number, key = time): Reading => ({ key, time, mgdl });
 
 describe('classify', () => {
-  it('jejum, almoço, janta e outras', () => {
+  it('jejum, almoço, jantar e extras (janelas sem buracos entre si)', () => {
     expect(classify('2026-11-13T07:30:00')).toBe('jejum');
     expect(classify('2026-11-13T14:10:00')).toBe('almoco');
+    expect(classify('2026-11-13T16:03:00')).toBe('almoco'); // antes caía fora da janela
+    expect(classify('2026-11-13T17:29:00')).toBe('almoco');
+    expect(classify('2026-11-13T17:30:00')).toBe('janta');
     expect(classify('2026-11-13T21:05:00')).toBe('janta');
-    expect(classify('2026-11-13T17:00:00')).toBe('outra');
     expect(classify('2026-11-13T02:00:00')).toBe('outra');
   });
   it('limites: início inclusivo, fim exclusivo', () => {
     expect(classify('2026-11-13T04:00:00')).toBe('jejum');
-    expect(classify('2026-11-13T10:30:00')).toBe('outra');
+    expect(classify('2026-11-13T10:29:00')).toBe('jejum');
+    expect(classify('2026-11-13T10:30:00')).toBe('almoco');
   });
-  it('janta passa da meia-noite: 00:22 conta como 2 h após janta', () => {
+  it('janta passa da meia-noite: 00:22 conta como jantar', () => {
     expect(classify('2026-11-14T00:22:00')).toBe('janta');
     expect(classify('2026-11-13T23:40:00')).toBe('janta');
     expect(classify('2026-11-14T00:59:00')).toBe('janta');
@@ -48,6 +53,98 @@ describe('classify', () => {
   it('respeita janelas personalizadas', () => {
     const s = { ...DEFAULT_SETTINGS, windows: { ...DEFAULT_SETTINGS.windows, almoco: [11 * 60, 12 * 60] as [number, number] } };
     expect(classify('2026-11-13T11:30:00', s)).toBe('almoco');
+  });
+});
+
+describe('annotate: sugestão, escolha manual e dia da refeição', () => {
+  const at = (time: string, mgdl: number, extra: Partial<Reading> = {}): Reading => ({ key: time, time, mgdl, ...extra });
+  const by = (rs: ReturnType<typeof annotate>, time: string) => rs.find((x) => x.time === time)!;
+
+  it('o jantar medido depois da meia-noite pertence ao dia anterior (3 medições de "hoje")', () => {
+    const rs = annotate([
+      at('2026-11-14T00:22:00', 160), // jantar de ontem, medido após a meia-noite
+      at('2026-11-14T07:00:00', 150),
+      at('2026-11-14T16:03:00', 140),
+      at('2026-11-14T22:31:00', 130),
+    ]);
+    expect(by(rs, '2026-11-14T00:22:00')).toMatchObject({ category: 'janta', day: '2026-11-13' });
+    expect(by(rs, '2026-11-14T07:00:00')).toMatchObject({ category: 'jejum', day: '2026-11-14' });
+    expect(by(rs, '2026-11-14T16:03:00')).toMatchObject({ category: 'almoco', day: '2026-11-14' });
+    expect(by(rs, '2026-11-14T22:31:00')).toMatchObject({ category: 'janta', day: '2026-11-14' });
+    // "Hoje": só as 3 medições do dia, sem a da madrugada
+    expect(filterRange(rs, '2026-11-14', '2026-11-14').map((x) => x.mgdl)).toEqual([150, 140, 130]);
+    // e o cartão do jantar de hoje não mistura as duas
+    expect(summarizeByCategory(filterRange(rs, '2026-11-14', '2026-11-14')).byCategory.janta.mean).toBe(130);
+  });
+
+  it('6 medições no dia: sugere uma por momento (a mais perto do horário típico) e marca o conflito', () => {
+    const rs = annotate([
+      at('2026-11-14T07:00:00', 150),
+      at('2026-11-14T08:30:00', 151),
+      at('2026-11-14T12:00:00', 152),
+      at('2026-11-14T16:03:00', 153),
+      at('2026-11-14T18:00:00', 154),
+      at('2026-11-14T22:31:00', 155),
+    ]);
+    expect(by(rs, '2026-11-14T07:00:00')).toMatchObject({ suggested: 'jejum', conflict: true });
+    expect(by(rs, '2026-11-14T08:30:00')).toMatchObject({ suggested: 'outra', conflict: true });
+    expect(by(rs, '2026-11-14T16:03:00')).toMatchObject({ suggested: 'almoco' });
+    expect(by(rs, '2026-11-14T12:00:00')).toMatchObject({ suggested: 'outra' });
+    expect(by(rs, '2026-11-14T22:31:00')).toMatchObject({ suggested: 'janta' });
+    expect(by(rs, '2026-11-14T18:00:00')).toMatchObject({ suggested: 'outra' });
+    expect(rs.filter((x) => x.category !== 'outra')).toHaveLength(3);
+  });
+
+  it('o horário usual é configurável e decide a sugestão', () => {
+    const rs = [at('2026-11-14T12:00:00', 152), at('2026-11-14T16:03:00', 153)];
+    // padrão (almoço usual 15:00): vale o das 16:03
+    expect(annotate(rs).map((x) => x.suggested)).toEqual(['outra', 'almoco']);
+    // quem almoça cedo e mede às 12:00 muda o horário usual e a sugestão acompanha
+    const cedo = { ...DEFAULT_SETTINGS, usual: { ...DEFAULT_SETTINGS.usual!, almoco: 12 * 60 + 30 } };
+    expect(annotate(rs, cedo).map((x) => x.suggested)).toEqual(['almoco', 'outra']);
+  });
+
+  it('sem disputa não há conflito', () => {
+    const rs = annotate([at('2026-11-14T07:00:00', 150), at('2026-11-14T16:03:00', 140)]);
+    expect(rs.every((x) => !x.conflict)).toBe(true);
+  });
+
+  it('a escolha manual vence e libera as outras como extras', () => {
+    const rs = annotate([
+      at('2026-11-14T12:00:00', 152, { manual: 'almoco' }),
+      at('2026-11-14T16:03:00', 153),
+    ]);
+    expect(by(rs, '2026-11-14T12:00:00')).toMatchObject({ category: 'almoco', conflict: false });
+    expect(by(rs, '2026-11-14T16:03:00')).toMatchObject({ suggested: 'outra', category: 'outra', conflict: false });
+  });
+
+  it('o usuário pode forçar qualquer momento, até fora da janela', () => {
+    const rs = annotate([at('2026-11-14T09:00:00', 150, { manual: 'janta' })]);
+    expect(rs[0].category).toBe('janta');
+    expect(rs[0].day).toBe('2026-11-14'); // 09:00 já é depois do início do jejum: mesmo dia
+  });
+
+  it('jantar escolhido de madrugada (antes do jejum) vai para o dia anterior', () => {
+    const rs = annotate([at('2026-11-14T03:30:00', 150, { manual: 'janta' }), at('2026-11-14T05:00:00', 150, { manual: 'janta' })]);
+    expect(rs[0].day).toBe('2026-11-13');
+    expect(rs[1].day).toBe('2026-11-14');
+  });
+
+  it('dois dias diferentes não disputam o mesmo momento', () => {
+    const rs = annotate([at('2026-11-13T22:00:00', 150), at('2026-11-14T22:00:00', 151)]);
+    expect(rs.map((x) => x.suggested)).toEqual(['janta', 'janta']);
+    expect(rs.every((x) => !x.conflict)).toBe(true);
+  });
+
+  it('agrupa por dia da refeição (o jantar da madrugada fica no dia anterior)', () => {
+    const rs = annotate([at('2026-11-14T00:22:00', 160), at('2026-11-14T07:00:00', 150)]);
+    const g = groupByPeriod(rs, 'day');
+    expect(g.map((x) => x.key)).toEqual(['2026-11-13', '2026-11-14']);
+    expect(g[0].byCategory.janta.count).toBe(1);
+  });
+
+  it('nomes: Almoço, Jantar e Extras', () => {
+    expect([CATEGORY_LABEL.jejum, CATEGORY_LABEL.almoco, CATEGORY_LABEL.janta, CATEGORY_LABEL.outra]).toEqual(['Jejum', 'Almoço', 'Jantar', 'Extras']);
   });
 });
 

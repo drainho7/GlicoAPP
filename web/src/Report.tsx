@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo } from 'react';
 import {
+  annotate,
   calibrateWithExam,
   CATEGORY_LABEL,
-  classify,
+  catOf,
   estimateA1c,
   filterRange,
   groupByPeriod,
@@ -34,8 +35,9 @@ function readParams() {
 
 export default function Report() {
   const { from, to } = readParams();
-  const all = useMemo(() => loadReadings(), []);
   const settings = useMemo(() => loadSettings(), []);
+  // Mesmas regras da tela: momento sugerido/escolhido e dia da refeição.
+  const all = useMemo(() => annotate(loadReadings(), settings), [settings]);
   const rs = useMemo(() => filterRange(all, from, to), [all, from, to]);
 
   const sum = useMemo(() => summarizeByCategory(rs, settings), [rs, settings]);
@@ -61,7 +63,7 @@ export default function Report() {
 
   const inTarget = useMemo(() => {
     if (!rs.length) return null;
-    const ok = rs.filter((r) => statusOf(r.mgdl, classify(r.time, settings), settings) === 'ok').length;
+    const ok = rs.filter((r) => statusOf(r.mgdl, catOf(r, settings), settings) === 'ok').length;
     return Math.round((ok / rs.length) * 100);
   }, [rs, settings]);
 
@@ -70,7 +72,7 @@ export default function Report() {
     x: toMs(r.time),
     y: r.mgdl,
     // anel nas leituras acima/abaixo da meta da própria categoria
-    status: statusOf(r.mgdl, classify(r.time, settings), settings),
+    status: statusOf(r.mgdl, catOf(r, settings), settings),
   }));
   const highCount = geralPoints.filter((p) => p.status === 'high').length;
   const lowCount = geralPoints.filter((p) => p.status === 'low').length;
@@ -81,7 +83,7 @@ export default function Report() {
     ...(['jejum', 'almoco', 'janta'] as const).map((c) => ({
       name: CATEGORY_LABEL[c],
       color: COLOR[c],
-      points: rs.filter((r) => classify(r.time, settings) === c).map((r) => ({ x: toMs(r.time), y: r.mgdl })),
+      points: rs.filter((r) => catOf(r, settings) === c).map((r) => ({ x: toMs(r.time), y: r.mgdl })),
     })),
     ...(trend
       ? [{
@@ -202,7 +204,7 @@ export default function Report() {
 
           <h2>Médias por {period === 'day' ? 'dia' : period === 'week' ? 'semana' : 'mês'}</h2>
           <table className="r-table">
-            <thead><tr><th>Período</th><th>Leituras</th><th>Jejum</th><th>2 h após almoço</th><th>2 h após janta</th></tr></thead>
+            <thead><tr><th>Período</th><th>Leituras</th><th>Jejum</th><th>Almoço</th><th>Jantar</th></tr></thead>
             <tbody>
               {groups.map((g) => (
                 <tr key={g.key}>
@@ -224,7 +226,7 @@ export default function Report() {
             <tbody>
               {[...byDay.entries()].reverse().flatMap(([day, list]) =>
                 [...list].reverse().map((r, i) => {
-                  const c = classify(r.time, settings);
+                  const c = catOf(r, settings);
                   const st = statusOf(r.mgdl, c, settings);
                   return (
                     <tr key={r.key}>

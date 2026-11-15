@@ -87,13 +87,27 @@ export function mergeReadings(incoming: StoredReading[]): { added: number; all: 
   const map = new Map(loadReadings().map((r) => [r.key, r]));
   let added = 0;
   for (const r of incoming) {
-    if (!map.has(r.key)) added++;
-    map.set(r.key, r);
+    const prev = map.get(r.key);
+    if (!prev) added++;
+    // Reimportar não pode apagar a escolha de momento (jejum/almoço/jantar) que o usuário já fez.
+    map.set(r.key, prev?.manual ? { ...r, manual: prev.manual } : r);
   }
   const all = [...map.values()].sort((a, b) => (a.time < b.time ? -1 : 1));
   localStorage.setItem(RK, JSON.stringify(all));
   backup();
   return { added, all };
+}
+
+/** Guarda (ou remove, com undefined) a escolha do usuário para o momento de uma leitura. */
+export function setReadingCategory(key: string, category: StoredReading['manual']): StoredReading[] {
+  const all = loadReadings().map((r) => {
+    if (r.key !== key) return r;
+    const { manual: _old, ...rest } = r;
+    return category ? { ...rest, manual: category } : rest;
+  });
+  localStorage.setItem(RK, JSON.stringify(all));
+  backup();
+  return all;
 }
 
 export function clearReadings() {
@@ -109,6 +123,11 @@ export function loadSettings(): Settings {
     // Migração: a janela de janta antiga (19:30–23:00), nunca personalizada, passa para o novo padrão (até 01:00).
     const j = s.windows?.janta;
     if (Array.isArray(j) && j[0] === 19 * 60 + 30 && j[1] === 23 * 60) s.windows.janta = DEFAULT_SETTINGS.windows.janta;
+    // Migração: janelas de almoço e jantar antigas (13:00–16:00 e 19:30–01:00), nunca personalizadas,
+    // passam para as novas, sem buracos (almoço 10:30–17:30, jantar 17:30–01:00).
+    const w = s.windows;
+    if (w?.almoco && w.almoco[0] === 13 * 60 && w.almoco[1] === 16 * 60) w.almoco = DEFAULT_SETTINGS.windows.almoco;
+    if (w?.janta && w.janta[0] === 19 * 60 + 30 && w.janta[1] === 60) w.janta = DEFAULT_SETTINGS.windows.janta;
     // Migração: meta de jejum antiga (70–130), nunca personalizada, passa para a da SBD (80–130).
     const t = s.targets?.jejum;
     if (Array.isArray(t) && t[0] === 70 && t[1] === 130) s.targets.jejum = DEFAULT_SETTINGS.targets.jejum;
