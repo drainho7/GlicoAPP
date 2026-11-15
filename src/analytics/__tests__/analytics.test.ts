@@ -1,6 +1,7 @@
 import {
   a1cFromMean,
   annotate,
+  assignSlotChanges,
   CATEGORY_LABEL,
   calibrateWithExam,
   eagFromA1c,
@@ -145,6 +146,78 @@ describe('annotate: sugestão, escolha manual e dia da refeição', () => {
 
   it('nomes: Almoço, Jantar e Extras', () => {
     expect([CATEGORY_LABEL.jejum, CATEGORY_LABEL.almoco, CATEGORY_LABEL.janta, CATEGORY_LABEL.outra]).toEqual(['Jejum', 'Almoço', 'Jantar', 'Extras']);
+  });
+});
+
+describe('assignSlotChanges: escolher qual medição vale para cada momento', () => {
+  const at = (time: string, mgdl: number, extra: Partial<Reading> = {}): Reading => ({ key: time, time, mgdl, ...extra });
+  /** Aplica as mudanças como o app faz e reanota o dia. */
+  const apply = (rs: Reading[], changes: ReturnType<typeof assignSlotChanges>) =>
+    annotate<Reading>(
+      rs.map((r): Reading => {
+        const c = changes.find((x) => x.key === r.key);
+        if (!c) return r;
+        const { manual: _m, ...rest } = r;
+        return c.manual ? { ...rest, manual: c.manual } : rest;
+      }),
+    );
+  const dia = () => [
+    at('2026-11-14T07:00:00', 150),
+    at('2026-11-14T08:30:00', 151),
+    at('2026-11-14T12:00:00', 152),
+    at('2026-11-14T16:03:00', 153),
+    at('2026-11-14T22:31:00', 154),
+  ];
+  const cat = (rs: ReturnType<typeof annotate>, hm: string) => rs.find((x) => x.time.endsWith(`T${hm}:00`))!.category;
+
+  it('escolher o 12:00 para o almoço: o 16:03, que era o sugerido, vira extra', () => {
+    const rs = annotate(dia());
+    expect(cat(rs, '16:03')).toBe('almoco');
+    const depois = apply(dia(), assignSlotChanges(rs, 'almoco', '2026-11-14T12:00:00'));
+    expect(cat(depois, '12:00')).toBe('almoco');
+    expect(cat(depois, '16:03')).toBe('outra');
+    expect(depois.find((x) => x.time.includes('T12:00'))!.manual).toBe('almoco');
+    expect(depois.find((x) => x.time.includes('T16:03'))!.manual).toBeUndefined(); // continua automático
+  });
+
+  it('trocar de novo: quem estava por escolha manual vira extra explícito', () => {
+    const um = apply(dia(), assignSlotChanges(annotate(dia()), 'almoco', '2026-11-14T12:00:00'));
+    const rs1 = annotate(um);
+    const dois = apply(um, assignSlotChanges(rs1, 'almoco', '2026-11-14T16:03:00'));
+    expect(cat(dois, '16:03')).toBe('almoco');
+    expect(cat(dois, '12:00')).toBe('outra');
+    expect(dois.find((x) => x.time.includes('T12:00'))!.manual).toBe('outra');
+  });
+
+  it('nenhuma medição para o momento: o momento fica vazio e as candidatas viram extras', () => {
+    const depois = apply(dia(), assignSlotChanges(annotate(dia()), 'jejum', null));
+    expect(cat(depois, '07:00')).toBe('outra');
+    expect(cat(depois, '08:30')).toBe('outra'); // não pode assumir o jejum sozinha
+    expect(depois.filter((x) => x.category === 'jejum')).toHaveLength(0);
+    // os outros momentos não mudam
+    expect(cat(depois, '16:03')).toBe('almoco');
+    expect(cat(depois, '22:31')).toBe('janta');
+  });
+
+  it('nenhuma medição não mexe no que o usuário já escolheu para outro momento', () => {
+    const base = [at('2026-11-14T07:00:00', 150), at('2026-11-14T08:30:00', 151, { manual: 'almoco' })];
+    const depois = apply(base, assignSlotChanges(annotate(base), 'jejum', null));
+    expect(cat(depois, '08:30')).toBe('almoco');
+    expect(cat(depois, '07:00')).toBe('outra');
+  });
+
+  it('escolher quem já é o sugerido não muda nada de efetivo', () => {
+    const depois = apply(dia(), assignSlotChanges(annotate(dia()), 'janta', '2026-11-14T22:31:00'));
+    expect(cat(depois, '22:31')).toBe('janta');
+    expect(depois.filter((x) => x.category === 'janta')).toHaveLength(1);
+  });
+
+  it('um momento vazio pode receber uma medição que era extra', () => {
+    const base = [at('2026-11-14T07:00:00', 150), at('2026-11-14T10:45:00', 151)]; // 10:45 cai no almoço (janela 10:30–17:30)
+    const rs = annotate(base);
+    const depois = apply(base, assignSlotChanges(rs, 'jejum', '2026-11-14T10:45:00'));
+    expect(cat(depois, '10:45')).toBe('jejum'); // o usuário manda
+    expect(cat(depois, '07:00')).toBe('outra');
   });
 });
 

@@ -98,16 +98,23 @@ export function mergeReadings(incoming: StoredReading[]): { added: number; all: 
   return { added, all };
 }
 
-/** Guarda (ou remove, com undefined) a escolha do usuário para o momento de uma leitura. */
-export function setReadingCategory(key: string, category: StoredReading['manual']): StoredReading[] {
+/** Guarda várias escolhas de momento de uma vez (undefined volta ao automático): um só salvamento e um só backup. */
+export function setReadingCategories(changes: { key: string; manual: StoredReading['manual'] }[]): StoredReading[] {
+  const by = new Map(changes.map((c) => [c.key, c.manual]));
   const all = loadReadings().map((r) => {
-    if (r.key !== key) return r;
+    if (!by.has(r.key)) return r;
     const { manual: _old, ...rest } = r;
-    return category ? { ...rest, manual: category } : rest;
+    const m = by.get(r.key);
+    return m ? { ...rest, manual: m } : rest;
   });
   localStorage.setItem(RK, JSON.stringify(all));
   backup();
   return all;
+}
+
+/** Guarda (ou remove, com undefined) a escolha do usuário para o momento de uma leitura. */
+export function setReadingCategory(key: string, category: StoredReading['manual']): StoredReading[] {
+  return setReadingCategories([{ key, manual: category }]);
 }
 
 export function clearReadings() {

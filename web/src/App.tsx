@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { readSheet } from 'read-excel-file/browser';
-import { annotate, Category, filterRange, previousRange, Settings } from '../../src/analytics/analytics';
+import { annotate, assignSlotChanges, Category, filterRange, previousRange, Settings } from '../../src/analytics/analytics';
 import { BodyReading, parseBodyRows } from '../../src/body/body';
 import { BodyScreen } from './body';
 import { importFromMeter } from './bluetooth';
@@ -30,6 +30,7 @@ import {
   mergeReadings,
   restoreFromBackup,
   saveSettings,
+  setReadingCategories,
   setReadingCategory,
   StoredReading,
 } from './store';
@@ -239,6 +240,10 @@ export default function App() {
   // O usuário escolhe o momento de uma medição (ou volta ao automático, com undefined).
   const changeCategory = (key: string, c: Category | undefined) => setAll(setReadingCategory(key, c));
 
+  // Escolhe qual medição do dia vale para Jejum/Almoço/Jantar (key vazia = nenhuma).
+  const pickForSlot = (slot: 'jejum' | 'almoco' | 'janta', key: string) =>
+    setAll(setReadingCategories(assignSlotChanges(current, slot, key || null, settings)));
+
   const updateSettings = (s: Settings) => {
     setSettings(s);
     saveSettings(s);
@@ -287,7 +292,7 @@ export default function App() {
                     selected={category}
                     onSelect={setCategory}
                     list={preset === 'today' ? current : undefined}
-                    onCategory={changeCategory}
+                    onPick={pickForSlot}
                   />
                   <ChartSection readings={current} settings={settings} category={category} onCategory={setCategory} />
                   <A1cCard readings={all} settings={settings} />

@@ -190,15 +190,45 @@ export function ReportDialog({
 
 /* ---------------- Cartões por refeição ---------------- */
 
-/** Linha pequena dentro do cartão: valor, hora e o seletor compacto para mover a medição de momento. */
-function MiniRow({ r, settings, onCategory }: { r: StoredReading; settings: Settings; onCategory: (key: string, c: Category | undefined) => void }) {
-  const st = statusOf(r.mgdl, catOf(r, settings), settings);
+type Slot = 'jejum' | 'almoco' | 'janta';
+
+/**
+ * Menu dentro da caixa de um momento: lista as medições do dia (valor e hora) e você escolhe qual vale para ele.
+ * A escolhida aparece marcada; a sugerida pelo app vem com "sugerida"; as que estão em outro momento mostram qual.
+ */
+function SlotPicker({
+  slot,
+  list,
+  settings,
+  onPick,
+}: {
+  slot: Slot;
+  list: StoredReading[];
+  settings: Settings;
+  onPick: (slot: Slot, key: string) => void;
+}) {
+  const mine = list.find((r) => catOf(r, settings) === slot);
+  const unresolved = !!mine?.conflict && !mine.manual;
   return (
-    <div className="mini-row">
-      <span className={`mini-val s-${st}`}>{r.mgdl}</span>
-      <span className="mini-time">{r.time.slice(11, 16)}</span>
-      <CategorySelect r={r} onChange={onCategory} compact />
-      {r.conflict && !r.manual && (
+    <div className="slotpick">
+      <select
+        className="catsel slot"
+        value={mine?.key ?? ''}
+        aria-label={`Qual medição vale para ${CATEGORY_LABEL[slot]}`}
+        onChange={(e) => onPick(slot, e.target.value)}
+      >
+        <option value="">{mine ? 'Nenhuma (virar extra)' : 'Sem medição'}</option>
+        {list.map((r) => {
+          const c = catOf(r, settings);
+          const nota = c === slot ? (!r.manual && r.suggested === slot ? ' · sugerida' : '') : ` · ${c === 'outra' ? 'extra' : CATEGORY_LABEL[c].toLowerCase()}`;
+          return (
+            <option key={r.key} value={r.key}>
+              {r.mgdl} mg/dL · {r.time.slice(11, 16)}{nota}
+            </option>
+          );
+        })}
+      </select>
+      {unresolved && (
         <span className="badge" title="Mais de uma medição caiu neste momento do dia. O app sugeriu uma; escolha qual vale.">escolha</span>
       )}
     </div>
@@ -212,31 +242,28 @@ export function CategoryCards({
   selected,
   onSelect,
   list,
-  onCategory,
+  onPick,
 }: {
   current: StoredReading[];
   previous: StoredReading[] | null;
   settings: Settings;
   selected: Category | 'todas';
   onSelect: (c: Category | 'todas') => void;
-  /** Se informado (período "Hoje"), lista cada medição dentro do cartão do seu momento, com seletor para trocar. */
+  /** Se informado (período "Hoje"), cada caixa ganha um menu com as medições do dia para escolher qual vale. */
   list?: StoredReading[];
-  onCategory?: (key: string, c: Category | undefined) => void;
+  onPick?: (slot: Slot, key: string) => void;
 }) {
   const cur = useMemo(() => summarizeByCategory(current, settings), [current, settings]);
   const prev = useMemo(() => (previous ? summarizeByCategory(previous, settings) : null), [previous, settings]);
   const cats = ['jejum', 'almoco', 'janta'] as const;
-  const byTime = (a: StoredReading, b: StoredReading) => (a.time < b.time ? -1 : 1);
-  const extras = list && onCategory ? list.filter((r) => catOf(r, settings) === 'outra').sort(byTime) : [];
+  const sorted = useMemo(() => (list ? [...list].sort((a, b) => (a.time < b.time ? -1 : 1)) : []), [list]);
   return (
-    <>
     <div className="cards3">
       {cats.map((c) => {
         const s = cur.byCategory[c];
         const pm = prev?.byCategory[c].mean ?? null;
         const delta = s.mean !== null && pm !== null ? Math.round(s.mean - pm) : null;
         const [lo, hi] = settings.targets[c];
-        const items = list && onCategory ? list.filter((r) => catOf(r, settings) === c).sort(byTime) : [];
         return (
           <div
             key={c}
@@ -259,26 +286,15 @@ export function CategoryCards({
               </div>
             )}
           </button>
-          {items.length > 0 && (
+          {onPick && sorted.length > 0 && (
             <div className="mini">
-              {items.map((r) => (
-                <MiniRow key={r.key} r={r} settings={settings} onCategory={onCategory!} />
-              ))}
+              <SlotPicker slot={c} list={sorted} settings={settings} onPick={onPick} />
             </div>
           )}
           </div>
         );
       })}
     </div>
-    {extras.length > 0 && (
-      <div className="extras">
-        <span className="muted">Extras de hoje:</span>
-        {extras.map((r) => (
-          <MiniRow key={r.key} r={r} settings={settings} onCategory={onCategory!} />
-        ))}
-      </div>
-    )}
-    </>
   );
 }
 
@@ -470,25 +486,16 @@ export function CategoryChips({ selected, onSelect }: { selected: Category | 'to
 }
 
 /** Escolha do momento de uma medição: mostra o que o app sugeriu e todas as opções; a sua escolha vale mais. */
-export function CategorySelect({
-  r,
-  onChange,
-  compact = false,
-}: {
-  r: StoredReading;
-  onChange: (key: string, c: Category | undefined) => void;
-  /** Versão pequena, para dentro dos cartões. */
-  compact?: boolean;
-}) {
+export function CategorySelect({ r, onChange }: { r: StoredReading; onChange: (key: string, c: Category | undefined) => void }) {
   return (
     <select
-      className={compact ? 'catsel compact' : 'catsel'}
+      className="catsel"
       value={r.manual ?? ''}
       aria-label="Momento da medição"
       title="O app sugere o momento pelo horário. Escolha outro se estiver errado."
       onChange={(e) => onChange(r.key, (e.target.value || undefined) as Category | undefined)}
     >
-      <option value="">{compact ? 'Auto' : 'Automático'} · {r.suggested && r.suggested !== 'outra' ? CATEGORY_LABEL[r.suggested] : 'Extra'}</option>
+      <option value="">Automático · {r.suggested && r.suggested !== 'outra' ? CATEGORY_LABEL[r.suggested] : 'Extra'}</option>
       <option value="jejum">Jejum</option>
       <option value="almoco">Almoço</option>
       <option value="janta">Jantar</option>

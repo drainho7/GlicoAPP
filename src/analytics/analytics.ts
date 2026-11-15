@@ -162,6 +162,36 @@ export function annotate<T extends Reading>(readings: T[], s: Settings = DEFAULT
   });
 }
 
+export interface CategoryChange {
+  key: string;
+  /** undefined = voltar ao automático. */
+  manual: Category | undefined;
+}
+
+/**
+ * O usuário escolheu QUAL medição vale para um momento do dia (jejum/almoço/jantar), entre as medições do dia.
+ *  - A escolhida passa a valer para o momento (escolha manual).
+ *  - Quem ocupava o momento sai dele e vira Extra: se estava ali por escolha do usuário, fica Extra explicitamente;
+ *    se era só sugestão, volta ao automático (que sugere Extra, pois o momento já foi escolhido).
+ *  - `key = null` significa "nenhuma medição para este momento": quem ocupava e também as outras medições do dia
+ *    que cairiam na janela desse momento viram Extra explícito (senão uma delas assumiria o momento sozinha).
+ * `day` são as medições (já anotadas) do dia em questão.
+ */
+export function assignSlotChanges(day: Reading[], slot: Slot, key: string | null, s: Settings = DEFAULT_SETTINGS): CategoryChange[] {
+  const changes: CategoryChange[] = [];
+  for (const r of day) {
+    if (r.key === key) {
+      if (r.manual !== slot) changes.push({ key: r.key, manual: slot });
+    } else if (key === null) {
+      const candidata = r.category === slot || (!r.manual && classify(r.time, s) === slot);
+      if (candidata && (!r.manual || r.manual === slot)) changes.push({ key: r.key, manual: 'outra' });
+    } else if (r.category === slot) {
+      changes.push({ key: r.key, manual: r.manual ? 'outra' : undefined });
+    }
+  }
+  return changes;
+}
+
 export interface Summary {
   count: number;
   mean: number | null;
